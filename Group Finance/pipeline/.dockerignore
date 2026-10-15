@@ -1,8 +1,54 @@
+# Build context for the ledger-pipeline image. Patterns are relative to this directory and
+# only match at the top level unless prefixed with **/ — keep the **/ forms for anything sensitive.
+
+# --- Not part of the runtime image
 .venv
 tests
 scripts
 apps_script
 deploy
-**/__pycache__
-*.pyc
 README.md
+requirements-dev.txt
+Dockerfile
+.dockerignore
+.gcloudignore
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/node_modules
+**/.DS_Store
+
+# --- Ledger data: must never enter an image (the service reads the ledger through Apps Script)
+**/*.xlsx
+**/*.xlsm
+**/*.xls
+**/*.csv
+**/*.docx
+**/*.doc
+**/*.pdf
+**/*小组奉献资料库*
+**/*Booklet*
+preview_site/data/
+preview_site/_archive/
+
+# --- Credentials and secrets
+**/.env
+**/.env.*
+**/*.env
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.pkcs12
+**/*credentials*.json
+**/*service_account*.json
+**/*service-account*.json
+**/client_secret*.json
+**/token.json
+**/tokens.json
+
+# --- Terraform state/vars if one is ever dropped in here
+**/.terraform
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfvars

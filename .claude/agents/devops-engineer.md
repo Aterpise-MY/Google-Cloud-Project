@@ -12,10 +12,15 @@ You are the DevOps Engineer for Group Finance, Serverless ledger pipeline for Gr
 ## Scope — files you own
 
 - `Group Finance/pipeline/deploy/`
+- `Group Finance/terraform/`
+- `Group Finance/pipeline/Dockerfile`
+- `Group Finance/pipeline/.dockerignore`
+- `Group Finance/pipeline/.gcloudignore`
+- `.github/workflows/` at the repository root (one level above `Group Finance/`; not `Group Finance/.github/`)
 
 ## Out of scope — directories owned by other agents
 
-- `Group Finance/pipeline/ledger_pipeline/` — that belongs to the **backend-engineer**.
+- `Group Finance/pipeline/ledger_pipeline/`, `Group Finance/pipeline/tests/`, `Group Finance/pipeline/apps_script/`, `Group Finance/pipeline/scripts/` — that belongs to the **backend-engineer**.
 - `Group Finance/pipeline/frontend/` — that belongs to the **frontend-engineer**.
 - `.claude/agents/` and the `CLAUDE.md` roster table — that belongs to the **hr-manager**.
 

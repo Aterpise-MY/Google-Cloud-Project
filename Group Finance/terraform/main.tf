@@ -1,8 +1,9 @@
 locals {
-  site_bucket    = var.site_bucket_name != "" ? var.site_bucket_name : "${var.project_id}-ledger-site"
-  archive_bucket = var.archive_bucket_name != "" ? var.archive_bucket_name : "${var.project_id}-ledger-private"
-  pipeline_token = var.pipeline_token != "" ? var.pipeline_token : random_id.pipeline_token[0].hex
-  clean_domain   = trim(replace(replace(var.custom_domain, "https://", ""), "http://", ""), "/")
+  site_bucket      = var.site_bucket_name != "" ? var.site_bucket_name : "${var.project_id}-ledger-site"
+  archive_bucket   = var.archive_bucket_name != "" ? var.archive_bucket_name : "${var.project_id}-ledger-private"
+  pipeline_token   = var.pipeline_token != "" ? var.pipeline_token : random_id.pipeline_token[0].hex
+  booklet_password = var.booklet_password != "" ? var.booklet_password : random_password.booklet_password[0].result
+  clean_domain     = trim(replace(replace(var.custom_domain, "https://", ""), "http://", ""), "/")
 
   services = [
     "run.googleapis.com",
@@ -13,6 +14,11 @@ locals {
     "storage.googleapis.com",
     "compute.googleapis.com",
     "firestore.googleapis.com",
+    # GitHub Actions keyless auth (Workload Identity Federation): pools/providers, token exchange,
+    # and service-account impersonation.
+    "iam.googleapis.com",
+    "sts.googleapis.com",
+    "iamcredentials.googleapis.com",
   ]
 }
 
@@ -149,6 +155,36 @@ resource "google_secret_manager_secret_iam_member" "netlify_jws_accessor" {
   member    = "serviceAccount:${google_service_account.ledger_pipeline.email}"
 }
 
+# Booklet login password (BOOKLET_PASSWORD). Generated unless var.booklet_password is set;
+# read it with: terraform output -raw booklet_password
+resource "random_password" "booklet_password" {
+  count   = var.booklet_password == "" ? 1 : 0
+  length  = 32
+  special = false
+}
+
+resource "google_secret_manager_secret" "booklet_password" {
+  project   = var.project_id
+  secret_id = "ledger-booklet-password"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.enabled_apis]
+}
+
+resource "google_secret_manager_secret_version" "booklet_password_version" {
+  secret      = google_secret_manager_secret.booklet_password.id
+  secret_data = local.booklet_password
+}
+
+resource "google_secret_manager_secret_iam_member" "booklet_password_accessor" {
+  secret_id = google_secret_manager_secret.booklet_password.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.ledger_pipeline.email}"
+}
+
 # 6. Artifact Registry
 resource "google_artifact_registry_repository" "ledger_repo" {
   project       = var.project_id
@@ -231,12 +267,54 @@ resource "google_cloud_run_v2_service" "ledger_pipeline" {
           }
         }
       }
+
+      env {
+        name = "BOOKLET_PASSWORD"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.booklet_password.secret_id
+            version = "latest"
+          }
+        }
+      }
     }
+  }
+
+  # Ownership split with .github/workflows/group-finance-deploy.yml. CI ships code; Terraform owns
+  # everything else (env, secrets, scaling, service account). Each entry stops one CI deploy from
+  # showing up as drift here, and stops `terraform apply` from undoing a CI deploy.
+  lifecycle {
+    ignore_changes = [
+      # CI deploys <ar-repo>/ledger-pipeline@sha256:<digest> on every merge to main.
+      # var.container_image is only the seed image used when Terraform first creates the service;
+      # because it is ignored, an apply re-sends the image that is already live.
+      template[0].containers[0].image,
+      # `gcloud run deploy` / `update-traffic` stamp the service with client = "gcloud" and the SDK
+      # version. Informational only; without these every CI run would show as drift.
+      client,
+      client_version,
+      # CI manages traffic: deploy --no-traffic, tag the candidate, smoke test, then
+      # update-traffic --to-latest. Traffic always ends as LATEST = 100%, so the revisions this
+      # config creates (env/secret changes) still receive traffic.
+      traffic,
+      # Deliberately NOT ignored:
+      # - template[0].labels / template[0].annotations: gcloud only writes system keys
+      #   (client.knative.dev/nonce, run.googleapis.com/client-name, ...), and the Cloud Run v2
+      #   API (which this provider reads) does not return them, so they cause no drift.
+      # - template[0].revision: CI deploys without --tag/--revision-suffix, so the revision
+      #   name stays server-generated and empty here. If someone deploys by hand with --tag or
+      #   --revision-suffix, gcloud pins an explicit name: the plan then shows it going to null
+      #   and the apply simply creates a new revision. Ignoring the field would instead make
+      #   the next apply re-send that existing name, which Cloud Run rejects (revision names
+      #   are unique).
+    ]
   }
 
   depends_on = [
     google_project_service.enabled_apis,
-    google_secret_manager_secret_iam_member.pipeline_token_accessor
+    google_secret_manager_secret_iam_member.pipeline_token_accessor,
+    google_secret_manager_secret_iam_member.booklet_password_accessor,
+    google_secret_manager_secret_version.booklet_password_version,
   ]
 }
 

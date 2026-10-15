@@ -20,6 +20,21 @@ This directory contains Terraform Infrastructure-as-Code (IaC) to provision and 
 - **Artifact Registry**: Docker repository `ledger` in `asia-southeast1`.
 - **Cloud Scheduler**: `ledger-month-end` cron job (`55 23 28-31 * *` at Kuala Lumpur timezone) calling `/close` with `X-Pipeline-Token`.
 - **Optional Custom Domain**: Direct Cloud Run domain mapping or Cloudflare CNAME to Cloud Run without an external GCP Load Balancer.
+- **Booklet password**: `ledger-booklet-password` secret (generated 32-char alphanumeric unless `booklet_password` is set), injected as `BOOKLET_PASSWORD`. Read it with `terraform output -raw booklet_password`.
+- **GitHub Actions deployer** (`github_actions.tf`): Workload Identity Federation pool `github` / provider `github-oidc` that trusts only repository id `1420258600` on `refs/heads/main`, and service account `gh-deployer` with resource-scoped grants only:
+  - `roles/artifactregistry.writer` on the `ledger` repository,
+  - `roles/run.developer` on the `ledger-pipeline` service,
+  - `roles/iam.serviceAccountUser` on the `ledger-pipeline` runtime service account,
+  - `roles/iam.workloadIdentityUser` on itself for the pool principalSet of that repository id.
+
+## Who owns what on the Cloud Run service
+
+The deploy workflow (`.github/workflows/group-finance-deploy.yml`) ships code on every merge to `main`. It pushes `ledger-pipeline:sha-<commit>`, deploys it by digest with `--no-traffic`, smoke tests it on a tagged URL and then routes `LATEST = 100%`. Terraform owns everything else: env, secrets, scaling and the service account. The `lifecycle.ignore_changes` block on `google_cloud_run_v2_service.ledger_pipeline` (image, `client`, `client_version`, `traffic`) keeps the two from fighting:
+
+- a CI deploy never shows up as drift in `terraform plan`;
+- `terraform apply` never reverts the image CI deployed. It re-sends the live image together with the new env or secrets, and the new revision gets traffic because traffic is `LATEST = 100%`.
+
+`container_image` is only the seed image used when the service is first created.
 
 ## Prerequisites
 

@@ -1,0 +1,233 @@
+# Group Finance CI: runs on pull requests to main, and from group-finance-deploy.yml
+# (workflow_call with run_all: true) before every production deploy.
+#
+# There is deliberately no trigger-level `paths:` filter. Branch protection requires the
+# "Group Finance CI result" check, and a workflow that never starts would never report it, which
+# would block doc-only PRs. The `changes` job decides which test jobs run instead. The secret scan
+# and the result gate always run.
+name: Group Finance CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+    inputs:
+      run_all:
+        description: Run every job regardless of which paths changed (used by the deploy workflow)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # PRs: a new push supersedes the previous run. Deploy calls get a unique group (run_id) so they
+  # never cancel, or wait on, anything.
+  group: group-finance-ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # paths-filter lists the PR's files through the API; no checkout needed
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      image: ${{ steps.filter.outputs.image }}
+      apps_script: ${{ steps.filter.outputs.apps_script }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      # Skipped when run_all is true: outputs stay empty and every job runs through `inputs.run_all`.
+      # (The deploy workflow calls this from push/workflow_dispatch, where the API-based PR file
+      # listing does not apply.)
+      - name: Filter changed files
+        id: filter
+        if: ${{ !inputs.run_all }}
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          # A file counts when it matches at least one positive pattern and no negated pattern.
+          # ('every' would require a file to match ALL positive patterns, which is impossible here.)
+          predicate-quantifier: some-with-excludes
+          filters: |
+            python:
+              - 'Group Finance/pipeline/ledger_pipeline/**'
+              - 'Group Finance/pipeline/tests/**'
+              - 'Group Finance/pipeline/frontend/**'
+              - 'Group Finance/pipeline/preview_site/**'
+              - 'Group Finance/pipeline/requirements.txt'
+              - 'Group Finance/pipeline/requirements-dev.txt'
+              - '!**/*.md'
+            image:
+              - 'Group Finance/pipeline/ledger_pipeline/**'
+              - 'Group Finance/pipeline/frontend/**'
+              - 'Group Finance/pipeline/preview_site/**'
+              - 'Group Finance/pipeline/requirements.txt'
+              - 'Group Finance/pipeline/Dockerfile'
+              - 'Group Finance/pipeline/.dockerignore'
+              - '!**/*.md'
+            apps_script:
+              - 'Group Finance/pipeline/apps_script/**'
+              - '!**/*.md'
+            workflows:
+              - '.github/workflows/group-finance-*.yml'
+              - '!**/*.md'
+
+  pytest:
+    name: pytest (Python 3.14)
+    needs: changes
+    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.workflows == 'true' || inputs.run_all == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            Group Finance/pipeline/requirements.txt
+            Group Finance/pipeline/requirements-dev.txt
+
+      - name: Install WeasyPrint system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b
+
+      - name: Install Python dependencies
+        run: python -m pip install -r "Group Finance/pipeline/requirements-dev.txt"
+
+      # One test skips when the gitignored ledger workbook is absent; that is expected in CI.
+      - name: Run test suite
+        run: python -m pytest "Group Finance/pipeline/tests" -ra
+
+  docker:
+    name: Docker build + /healthz smoke
+    needs: changes
+    if: needs.changes.outputs.image == 'true' || needs.changes.outputs.workflows == 'true' || inputs.run_all == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build image (never pushed)
+        run: docker build --platform linux/amd64 -t ledger-pipeline:ci "Group Finance/pipeline"
+
+      - name: Run with only PORT and poll /healthz (max 30 s)
+        run: |
+          docker run -d --name ledger-ci -e PORT=8080 -p 127.0.0.1:8080:8080 ledger-pipeline:ci
+          body="$RUNNER_TEMP/healthz.json"
+          code=none
+          deadline=$((SECONDS + 30))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            code=$(curl -s -o "$body" -w '%{http_code}' --max-time 3 http://127.0.0.1:8080/healthz) || true
+            if [ "$code" = "200" ] && jq -e '.status == "ok"' "$body" >/dev/null 2>&1; then
+              echo "GET /healthz -> 200 $(cat "$body")"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::GET /healthz did not return 200 {\"status\":\"ok\"} within 30 s (last HTTP status: ${code})"
+          exit 1
+
+      - name: Container logs
+        if: failure()
+        run: docker logs ledger-ci 2>&1 || true
+
+  apps-script:
+    name: Apps Script tests
+    needs: changes
+    if: needs.changes.outputs.apps_script == 'true' || needs.changes.outputs.workflows == 'true' || inputs.run_all == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24" # Active LTS
+          package-manager-cache: false # no package.json; the test uses only Node built-ins
+
+      - name: Run Apps Script tests
+        run: node "Group Finance/pipeline/apps_script/test_code_gs.js"
+
+  # Runs on every PR and every deploy whatever changed: in a public repository this is the one
+  # check that also covers Terraform, docs and workflow changes.
+  secret-scan:
+    name: Secret scan (gitleaks, new commits only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      # sha256 of gitleaks_8.30.1_linux_x64.tar.gz (matches the release's checksums.txt)
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the commit range below needs history
+          persist-credentials: false
+
+      - name: Install gitleaks (pinned version, checksum verified)
+        run: |
+          curl -fsSL --proto '=https' -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" version
+
+      # Only the commits this PR or push introduces are scanned. The root commit (0519d65) contains
+      # an old default credential that is being rotated, so a full-history scan would fail forever.
+      - name: Scan commits introduced by this change
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          has_commit() { git cat-file -e "$1^{commit}" 2>/dev/null; }
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            if ! has_commit "$PR_BASE" || ! has_commit "$PR_HEAD"; then
+              echo "::error::PR base ($PR_BASE) or head ($PR_HEAD) is not in the checkout"
+              exit 1
+            fi
+            range="$PR_BASE..$PR_HEAD"
+          elif [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ] && has_commit "$PUSH_BEFORE"; then
+            range="$PUSH_BEFORE..$HEAD_SHA"
+          else
+            # workflow_dispatch, or a push whose previous tip is unknown: the commit being built.
+            range="$HEAD_SHA^!"
+          fi
+          echo "Scanning $(git rev-list --count "$range") commit(s) in $range"
+          "$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose --exit-code 1 --log-opts="$range" .
+
+  # The single required status check for branch protection. Skipped jobs (nothing relevant
+  # changed) count as success; failed or cancelled jobs fail the gate.
+  result:
+    name: Group Finance CI result
+    if: always()
+    needs: [changes, pytest, docker, apps-script, secret-scan]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Check job results
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          bad=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key] | join(", ")')
+          if [ -n "$bad" ]; then
+            echo "::error::Failed or cancelled: $bad"
+            exit 1
+          fi
+          echo "All required jobs passed or were skipped."

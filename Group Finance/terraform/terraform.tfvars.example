@@ -14,5 +14,15 @@ custom_domain = "ya5.finance.aterpise.com"
 # Set to true to provision a direct Cloud Run custom domain mapping via GCP
 enable_custom_domain_mapping = false
 
-# Container Image URL (if you built and pushed to Artifact Registry)
+# Seed image, used only when the Cloud Run service is first created. Afterwards the GitHub Actions
+# deploy workflow owns the image (it deploys by digest) and Terraform ignores this value.
 # container_image = "asia-southeast1-docker.pkg.dev/group-511516/ledger/ledger-pipeline:latest"
+
+# Optional: booklet login password. Leave unset to have Terraform generate one
+# (read it with: terraform output -raw booklet_password)
+# booklet_password = "..."
+
+# GitHub Actions deployer trust (defaults shown). Trust is pinned to the numeric repository id.
+# github_repository    = "Brendon20011007/Google-Cloud-Project"
+# github_repository_id = "1420258600"
+# github_deploy_branch = "main"
