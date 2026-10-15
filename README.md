@@ -37,7 +37,7 @@ flowchart TD
 
 ### 2.1 Manage Group Finance Web App (`/manage` & `/`)
 - **Technology Stack**: React 19, Tailwind CSS, Lucide icons (extracted from Netlify).
-- **Default Authentication**: `admin` / `Abc1234#` (SHA-256 hashed and verified via Firestore / local fallback).
+- **Authentication**: There is no default account. Users are Firestore documents `users/<username>` holding salted Werkzeug (scrypt) password hashes; legacy unsalted SHA-256 hashes still verify once and are upgraded on that login. Create or reset a user with `python "Group Finance/pipeline/scripts/create_user.py" --project <gcp-project-id> <username>` (needs Application Default Credentials with Firestore write access; the password is prompted twice, minimum 12 characters, and never printed). A successful `login` sets an HttpOnly, Secure, SameSite=Strict `ledger_session` cookie that is valid for 12 hours and signed with `PIPELINE_TOKEN`; if `PIPELINE_TOKEN` is unset, login returns 503. Every other `/api` action requires that session or the pipeline token (`X-Pipeline-Token`); the booklet's `booklet_auth` cookie may only call `delete_record`. Cross-origin requests (an `Origin` whose host differs from the request's host) are rejected with 403.
 - **Transaction Submission**:
   - Validates input: strictly forbids negative numbers and prevents simultaneous income and expense values.
   - Automatically routes to the unified backend endpoint (`POST /api`).
@@ -166,8 +166,8 @@ node "Group Finance/pipeline/apps_script/test_code_gs.js"
 
 ### 5.2 Start Local Server
 ```bash
-# Starts service on port 8000
-PYTHONPATH="Group Finance/pipeline" PORT=8000 "Group Finance/pipeline/.venv/bin/python" -m ledger_pipeline.service
+# Starts service on port 8000 (without PIPELINE_TOKEN, /api login returns 503)
+PIPELINE_TOKEN=local-dev-token PYTHONPATH="Group Finance/pipeline" PORT=8000 "Group Finance/pipeline/.venv/bin/python" -m ledger_pipeline.service
 ```
 - **Manage Web App**: [http://localhost:8000/manage](http://localhost:8000/manage) (or [http://localhost:8000/](http://localhost:8000/))
 - **Booklet Top-to-Bottom View**: [http://localhost:8000/booklet](http://localhost:8000/booklet)
@@ -175,20 +175,30 @@ PYTHONPATH="Group Finance/pipeline" PORT=8000 "Group Finance/pipeline/.venv/bin/
 
 ### 5.3 Test API Endpoints Locally
 ```bash
-# 1. Login check
+# Local runs usually have no Firestore credentials, so there are no users and login returns 401.
+# Use the pipeline token instead (start the app with PIPELINE_TOKEN=local-dev-token):
 curl -s -X POST http://localhost:8000/api \
-  -H "Content-Type: application/json" \
-  -d '{"action":"login","username":"admin","password":"Abc1234#"}'
+  -H "Content-Type: application/json" -H "X-Pipeline-Token: local-dev-token" \
+  -d '{"action":"get_yearly_summary","year":2026}'
 
-# 2. Query Yearly Summary
-curl -s -X POST http://localhost:8000/api \
+# With a user created by scripts/create_user.py in the Firestore project the app uses,
+# log in once and reuse the session cookie (curl keeps Secure cookies for http://localhost):
+curl -s -c cookies.txt -X POST http://localhost:8000/api \
+  -H "Content-Type: application/json" \
+  -d '{"action":"login","username":"<username>","password":"<password>"}'
+
+curl -s -b cookies.txt -X POST http://localhost:8000/api \
   -H "Content-Type: application/json" \
   -d '{"action":"get_yearly_summary","year":2026}'
 
-# 3. Add Record
-curl -s -X POST http://localhost:8000/api \
+# Add Record: "action" is required; the author is taken from the session
+curl -s -b cookies.txt -X POST http://localhost:8000/api \
   -H "Content-Type: application/json" \
-  -d '{"date":"2026-10-14","item":"小组测试奉献","income":100,"expense":0,"user":"admin"}'
+  -d '{"action":"add_record","date":"2026-10-14","item":"小组测试奉献","income":100,"expense":0}'
+
+# Logout clears the cookie
+curl -s -b cookies.txt -c cookies.txt -X POST http://localhost:8000/api \
+  -H "Content-Type: application/json" -d '{"action":"logout"}'
 ```
 
 ---

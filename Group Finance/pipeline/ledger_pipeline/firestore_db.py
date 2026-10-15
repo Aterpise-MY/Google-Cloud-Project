@@ -3,24 +3,72 @@
 Provides serverless persistence in Google Cloud Firestore for:
   - transactions: all ledger entries with timestamps, year/month keys, and running balance
   - monthly_closings: metadata of month-end closures and Drive upload IDs
-  - users: user credentials and authentication
+  - users: login credentials (salted Werkzeug password hashes; no built-in fallback account)
 
 Includes graceful local / in-memory fallback for offline testing.
 """
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import os
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+import re
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
+
+from werkzeug.security import check_password_hash, generate_password_hash
 
 log = logging.getLogger("ledger.firestore")
 
+# Usernames are Firestore document IDs under users/: normalised to strip().lower(), ASCII only, no "/".
+USERNAME_RE = re.compile(r"[a-z0-9._-]{1,64}")
+MIN_PASSWORD_LENGTH = 12
+_LEGACY_SHA256_RE = re.compile(r"[0-9a-fA-F]{64}")
+_dummy_hash: Optional[str] = None
+
+
+def normalise_username(username: Any) -> Optional[str]:
+    """strip() + lower(); returns None unless the result is a valid users/<id> document ID.
+
+    "." / ".." and "__*__" match the character class but are not legal Firestore document IDs.
+    """
+    if not isinstance(username, str):
+        return None
+    name = username.strip().lower()
+    if not USERNAME_RE.fullmatch(name) or name in (".", "..") or (name.startswith("__") and name.endswith("__")):
+        return None
+    return name
+
 
 def hash_password(password: str) -> str:
+    """New password hashes: Werkzeug's salted default method (scrypt)."""
+    return generate_password_hash(password)
+
+
+def _legacy_sha256(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def check_password(stored_hash: Any, password: str) -> Tuple[bool, bool]:
+    """Returns (matches, is_legacy). Legacy = unsalted 64-hex SHA-256 that should be re-hashed."""
+    if not isinstance(stored_hash, str) or not stored_hash or not isinstance(password, str):
+        return False, False
+    if _LEGACY_SHA256_RE.fullmatch(stored_hash):
+        return hmac.compare_digest(_legacy_sha256(password), stored_hash.lower()), True
+    try:
+        return check_password_hash(stored_hash, password), False
+    except Exception:  # unknown / malformed hash method
+        return False, False
+
+
+def _burn_hash_time(password: str) -> None:
+    """Spend about as long as a real check so a missing user is not distinguishable by timing."""
+    global _dummy_hash
+    if _dummy_hash is None:
+        _dummy_hash = generate_password_hash("dummy-password-for-timing")
+    check_password_hash(_dummy_hash, password)
 
 
 class FirestoreLedgerDB:
@@ -29,7 +77,14 @@ class FirestoreLedgerDB:
         self._client = None
         self._memory_tx: List[Dict[str, Any]] = []
         self._memory_closings: Dict[str, Dict[str, Any]] = {}
+        # Users for the no-client (local/test) store only; never consulted while a Firestore client exists.
+        self._memory_users: Dict[str, Dict[str, Any]] = {}
         self._init_client()
+
+    @property
+    def has_client(self) -> bool:
+        """True when a real Firestore client was created (False = in-memory fallback)."""
+        return self._client is not None
 
     def _init_client(self):
         try:
@@ -159,20 +214,64 @@ class FirestoreLedgerDB:
 
         self._memory_closings[ym_str] = closing_data
 
-    def verify_user(self, username: str, password: str) -> bool:
-        """Verifies username and password hash."""
-        target_hash = hash_password(password)
-        if self._client:
-            try:
-                doc = self._client.collection("users").document(username.lower()).get()
-                if doc.exists:
-                    stored_hash = doc.to_dict().get("password_hash")
-                    return stored_hash == target_hash
-            except Exception as exc:
-                log.warning("Firestore user lookup failed: %s", exc)
+    def set_user(self, username: str, password: str) -> None:
+        """Creates or resets users/<username> with a salted Werkzeug hash.
 
-        # Default fallback credentials (admin / Abc1234#)
-        if username.lower() == "admin":
-            if password == "Abc1234#" or target_hash == "778f21dfa476222f26f95f47da9b080c1c991d121a659598e9a643487f9f5110":
-                return True
-        return False
+        Raises ValueError for an invalid username / too-short password and re-raises Firestore write
+        errors (it never silently falls back to memory while a client exists).
+        """
+        name = normalise_username(username)
+        if name is None:
+            raise ValueError("username must match [a-z0-9._-]{1,64} after strip()/lower()")
+        if not isinstance(password, str) or len(password) < MIN_PASSWORD_LENGTH:
+            raise ValueError(f"password must be at least {MIN_PASSWORD_LENGTH} characters")
+        if password != password.strip():
+            # /api login strips the submitted password, so such a password could never log in
+            raise ValueError("password must not start or end with whitespace")
+        pw_hash = hash_password(password)
+        if self._client:
+            from google.cloud import firestore
+            self._client.collection("users").document(name).set(
+                {"password_hash": pw_hash, "updated_at": firestore.SERVER_TIMESTAMP}, merge=True)
+            return
+        self._memory_users[name] = {"password_hash": pw_hash, "updated_at": datetime.now(timezone.utc)}
+
+    def verify_user(self, username: str, password: str) -> bool:
+        """True only for a stored user whose password hash matches. Fails closed on every error."""
+        name = normalise_username(username)
+        if name is None or not isinstance(password, str) or not password:
+            return False
+
+        if not self._client:
+            record = self._memory_users.get(name)
+            if record is None:
+                _burn_hash_time(password)
+                return False
+            ok, legacy = check_password(record.get("password_hash"), password)
+            if ok and legacy:
+                self._memory_users[name] = {"password_hash": hash_password(password),
+                                            "updated_at": datetime.now(timezone.utc)}
+            return ok
+
+        try:
+            doc_ref = self._client.collection("users").document(name)
+            doc = doc_ref.get()
+            exists = bool(doc.exists)
+            stored = (doc.to_dict() or {}).get("password_hash") if exists else None
+        except Exception as exc:
+            log.error("Firestore user lookup failed for user %r: %s", name, exc)
+            return False
+        if not exists:
+            _burn_hash_time(password)
+            return False
+
+        ok, legacy = check_password(stored, password)
+        if ok and legacy:
+            try:
+                from google.cloud import firestore
+                doc_ref.set({"password_hash": hash_password(password),
+                             "updated_at": firestore.SERVER_TIMESTAMP}, merge=True)
+                log.info("Upgraded legacy SHA-256 password hash for user %r", name)
+            except Exception as exc:
+                log.warning("Could not upgrade legacy password hash for user %r: %s", name, exc)
+        return ok

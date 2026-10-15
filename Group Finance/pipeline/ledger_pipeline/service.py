@@ -17,11 +17,13 @@ import os
 from decimal import Decimal
 from html import escape as html_escape
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
 
 from flask import Flask, Response, jsonify, redirect, request, send_from_directory
+from itsdangerous import URLSafeTimedSerializer
 
 from .config import Settings
-from .firestore_db import FirestoreLedgerDB
+from .firestore_db import FirestoreLedgerDB, normalise_username
 from .ledger import build_months
 from .pipeline import Pipeline, parse_ym
 from .security import verify_netlify_signature, verify_token
@@ -35,6 +37,20 @@ MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oc
 # create_app(). There is no default password: unset/empty BOOKLET_PASSWORD disables booklet login.
 BOOKLET_COOKIE = "booklet_auth"
 BOOKLET_COOKIE_MAX_AGE = 2592000  # 30 days
+
+# POST /api session (manage app). The cookie value is an itsdangerous token signed with
+# Settings.pipeline_token (PIPELINE_TOKEN). Unset/empty token: login returns 503 and no session is valid.
+SESSION_COOKIE = "ledger_session"
+SESSION_MAX_AGE = 43200  # 12 hours, checked on every request
+SESSION_SALT = "ledger-session-v1"
+API_ACTIONS = ("get_yearly_summary", "add_record", "delete_record")  # all require an authenticated caller
+
+
+def session_serializer(secret: str) -> Optional[URLSafeTimedSerializer]:
+    """Signer for ledger_session cookies, or None (fail closed) when no secret is configured."""
+    if not secret or not secret.strip():
+        return None
+    return URLSafeTimedSerializer(secret, salt=SESSION_SALT, signer_kwargs={"digest_method": hashlib.sha256})
 
 
 def booklet_token(user: str, password: str) -> str:
@@ -153,11 +169,17 @@ def build_pipeline(settings: Settings) -> Pipeline:
                     invalidate=make_invalidator(settings.cdn_project, settings.cdn_url_map))
 
 
-def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
+def create_app(settings: Settings = None, pipeline: Pipeline = None,
+               db: Optional[FirestoreLedgerDB] = None) -> Flask:
     app = Flask(__name__)
     settings = settings or Settings.from_env()
     holder = {"p": pipeline}
-    db = FirestoreLedgerDB(settings.cdn_project)
+    db = db if db is not None else FirestoreLedgerDB(settings.cdn_project)
+
+    sessions = session_serializer(settings.pipeline_token)
+    if sessions is None:
+        log.warning("PIPELINE_TOKEN is not set: /api login is disabled "
+                    "(login returns 503; no ledger_session cookie is accepted)")
 
     booklet_user = settings.booklet_user
     booklet_password = settings.booklet_password
@@ -319,26 +341,84 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
     # -------------------------------------------------------------------------
     # Unified API Endpoint (/api - replaces Apps Script calls from frontend)
     # -------------------------------------------------------------------------
+    def session_user(req) -> Optional[str]:
+        """Username carried by a valid (good signature, not expired) ledger_session cookie."""
+        raw = req.cookies.get(SESSION_COOKIE)
+        if sessions is None or not raw:
+            return None
+        try:
+            payload = sessions.loads(raw, max_age=SESSION_MAX_AGE)
+        except Exception:  # itsdangerous.BadData (bad signature, expired, malformed) - never a 500
+            return None
+        user = payload.get("u") if isinstance(payload, dict) else None
+        return user if isinstance(user, str) and normalise_username(user) == user else None
+
+    def api_caller(req, action) -> Optional[str]:
+        """Authenticated caller of a non-login /api action, or None."""
+        user = session_user(req)
+        if user:
+            return user
+        if verify_token(req.headers, settings.pipeline_token):
+            return "pipeline"
+        if action == "delete_record" and is_booklet_auth(req):
+            return "booklet"   # the booklet page's delete button (booklet_auth cookie)
+        return None
+
+    def same_origin(req) -> bool:
+        """No Origin header passes. Otherwise its host must equal Host (schemes ignored: TLS ends at Cloud Run)."""
+        origin = req.headers.get("Origin")
+        if origin is None:
+            return True
+        try:
+            origin_host = urlsplit(origin.strip()).netloc
+        except ValueError:
+            return False
+        return bool(origin_host) and origin_host.lower() == req.host.lower()
+
+    def clear_session(resp):
+        resp.delete_cookie(SESSION_COOKIE, path="/", secure=True, httponly=True, samesite="Strict")
+        return resp
+
     @app.post("/api")
     def api_handler():
         """Backend API powering the Manage Group Finance frontend."""
         data = request.get_json(force=True, silent=True) or request.form.to_dict() or {}
+        if not isinstance(data, dict):   # e.g. a JSON list or string body
+            data = {}
         if not data:
             return jsonify(status="error", message="请求体不能为空。"), 400
-        action = data.get("action", "add_record")
+        if not same_origin(request):
+            return jsonify(status="error", code="bad_origin", message="Cross-origin request rejected."), 403
+        action = data.get("action")
 
-        # 1. Action: login
+        # 1. Action: login (sets the ledger_session cookie)
         if action == "login":
             username = str(data.get("username", "")).strip()
             password = str(data.get("password", "")).strip()
             if not username or not password:
                 return jsonify(status="error", message="Username and password are required."), 400
+            if sessions is None:
+                return jsonify(status="error", code="login_disabled", message="登录尚未配置，请联系管理员。"), 503
 
-            if db.verify_user(username, password):
-                return jsonify(status="success", user=username, token="auth-" + username)
+            name = normalise_username(username)
+            if name is not None and db.verify_user(name, password):
+                resp = jsonify(status="success", user=name)
+                resp.set_cookie(SESSION_COOKIE, sessions.dumps({"u": name}), max_age=SESSION_MAX_AGE,
+                                path="/", secure=True, httponly=True, samesite="Strict")
+                return resp
             return jsonify(status="error", message="Invalid credentials"), 401
 
-        # 2. Action: get_yearly_summary
+        # 2. Action: logout (no auth required, idempotent)
+        if action == "logout":
+            return clear_session(jsonify(status="success"))
+
+        caller = api_caller(request, action)
+        if caller is None:
+            return jsonify(status="error", code="auth_required", message="登录已过期或未登录，请重新登录。"), 401
+        if action not in API_ACTIONS:   # a missing action no longer means add_record
+            return jsonify(status="error", code="unknown_action", message="未知操作。"), 400
+
+        # 3. Action: get_yearly_summary
         if action == "get_yearly_summary":
             try:
                 year = int(data.get("year") or settings.now().year)
@@ -383,7 +463,7 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
                 data=summary_data,
             )
 
-        # 3. Action: delete_record
+        # 4. Action: delete_record
         if action == "delete_record":
             try:
                 year = int(data.get("year") or 0)
@@ -499,7 +579,7 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
 
             return jsonify(status="success", message="记录已成功删除")
 
-        # 4. Action: add_record (default when submitting transactions)
+        # 5. Action: add_record (author = authenticated caller, never the request body)
         date_str = str(data.get("date") or settings.today().isoformat()).strip()
         item = str(data.get("item") or "").strip()
         try:
@@ -568,7 +648,7 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
 
         db.add_transaction(
             date_str=date_str, item=item, income=income, expense=expense,
-            balance=new_bal, user=str(data.get("user", "admin"))
+            balance=new_bal, user=caller
         )
 
         # 4. Real-time update: Re-render the 小组每月奉献记录 (Booklet UI) immediately!
