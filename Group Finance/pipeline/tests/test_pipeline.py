@@ -590,5 +590,165 @@ class RecordDeletionTests(unittest.TestCase):
         self.assertEqual(r_sum.get_json()["status"], "success")
 
 
+class BookletAuthTests(unittest.TestCase):
+    """/booklet login: BOOKLET_PASSWORD is the only credential source; unset/empty fails closed."""
+
+    LOGIN_FORM = 'name="password"'
+    # cookie values an attacker can compute from public code
+    EMPTY_PASSWORD_TOKEN = hashlib.sha256(b"admin::booklet-salt-2026").hexdigest()
+
+    def setUp(self):
+        from unittest.mock import MagicMock, patch
+        # booklet auth never touches Firestore; stub it so no GCP client (or metadata probe) is created
+        patcher = patch("ledger_pipeline.service.FirestoreLedgerDB", MagicMock())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def client(self, settings):
+        from ledger_pipeline.service import create_app
+        p = Pipeline(settings, FakeSource(sheets_fixture()), LocalStorage(self.tmp.name),
+                     pdf=lambda h: b"pdf", now=at(2026, 10, 14))
+        return create_app(settings, p).test_client()
+
+    @staticmethod
+    def basic(user, password):
+        return {"Authorization": "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()}
+
+    def assert_login_page(self, r):
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(self.LOGIN_FORM, r.get_data(as_text=True))
+
+    def assert_booklet(self, r):
+        self.assertEqual(r.status_code, 200)
+        body = r.get_data(as_text=True)
+        self.assertNotIn(self.LOGIN_FORM, body)
+        self.assertIn("_10 /2026", body)
+
+    def assert_cookies_rejected(self, c, tokens):
+        from ledger_pipeline.service import BOOKLET_COOKIE
+        for tok in tokens:
+            c.set_cookie(BOOKLET_COOKIE, tok)
+            self.assert_login_page(c.get("/booklet"))
+            r = c.get("/booklet/2026-10.html")
+            self.assertEqual(r.status_code, 302)
+            self.assertTrue(r.headers["Location"].endswith("/booklet"))
+        c.delete_cookie(BOOKLET_COOKIE)
+
+    # (a) unset / empty password -----------------------------------------------------------
+    def test_unset_password_rejects_form_basic_auth_and_cookies(self):
+        s = Settings(pipeline_token="tok")                 # BOOKLET_PASSWORD not configured
+        with self.assertLogs("ledger", level="WARNING") as logs:
+            c = self.client(s)
+        self.assertEqual(len([m for m in logs.output if "BOOKLET_PASSWORD is not set" in m]), 1)
+
+        for pw in ("", "anything"):
+            r = c.post("/booklet", data={"username": "admin", "password": pw})
+            self.assertEqual(r.status_code, 503)
+            self.assertNotIn("Set-Cookie", r.headers)
+            self.assertIn("Booklet login is not configured", r.get_data(as_text=True))
+        r = c.post("/booklet", data={"username": '"><script>x</script>', "password": "p"})
+        self.assertEqual(r.status_code, 503)
+        self.assertNotIn("<script>x</script>", r.get_data(as_text=True))
+
+        for pw in ("", "anything"):
+            self.assert_login_page(c.get("/booklet", headers=self.basic("admin", pw)))
+
+        anything_token = hashlib.sha256(b"admin:anything:booklet-salt-2026").hexdigest()
+        self.assert_cookies_rejected(c, [self.EMPTY_PASSWORD_TOKEN, anything_token, ""])
+
+        # pipeline-token access to the booklet is independent of BOOKLET_PASSWORD (unchanged)
+        self.assert_booklet(c.get("/booklet", headers={"X-Pipeline-Token": "tok"}))
+
+    def test_whitespace_only_password_counts_as_unset(self):
+        with self.assertLogs("ledger", level="WARNING"):
+            c = self.client(Settings(booklet_password="   "))
+        r = c.post("/booklet", data={"username": "admin", "password": "   "})
+        self.assertEqual(r.status_code, 503)
+        self.assertNotIn("Set-Cookie", r.headers)
+        self.assert_login_page(c.get("/booklet", headers=self.basic("admin", "   ")))
+        self.assert_cookies_rejected(c, [hashlib.sha256(b"admin:   :booklet-salt-2026").hexdigest()])
+
+    def test_settings_from_env_has_no_default_password(self):
+        s = Settings.from_env({})
+        self.assertEqual(s.booklet_user, "admin")
+        self.assertEqual(s.booklet_password, "")
+
+    # (b) password from env ----------------------------------------------------------------
+    def test_password_from_env_login_sets_cookie_that_validates(self):
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"BOOKLET_PASSWORD": "env-Test-pw#1"}):
+            s = Settings.from_env()
+        self.assertEqual(s.booklet_password, "env-Test-pw#1")
+        self.assertNotIn("env-Test-pw#1", repr(s))           # secret kept out of reprs/logs
+        with self.assertNoLogs("ledger", level="WARNING"):
+            c = self.client(s)
+
+        self.assert_login_page(c.get("/booklet"))
+        r = c.post("/booklet", data={"username": "Admin", "password": "env-Test-pw#1"})  # username case-insensitive
+        self.assertEqual(r.status_code, 302)
+        self.assertTrue(r.headers["Location"].endswith("/booklet"))
+        cookie = r.headers["Set-Cookie"]
+        token = hashlib.sha256(b"admin:env-Test-pw#1:booklet-salt-2026").hexdigest()
+        self.assertIn(f"booklet_auth={token}", cookie)
+        self.assertIn("Max-Age=2592000", cookie)
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("SameSite=Lax", cookie)
+
+        # the client now carries the cookie: it is accepted on the booklet and its pages
+        self.assert_booklet(c.get("/booklet"))
+        self.assertEqual(c.get("/booklet/2026-10.html").status_code, 200)
+
+        # same cookie value presented by a different client also validates
+        c2 = self.client(s)
+        c2.set_cookie("booklet_auth", token)
+        self.assert_booklet(c2.get("/booklet"))
+        # basic auth with the configured credentials works too
+        self.assert_booklet(self.client(s).get("/booklet", headers=self.basic("admin", "env-Test-pw#1")))
+        # logout clears the cookie
+        c.get("/booklet/logout")
+        self.assert_login_page(c.get("/booklet"))
+
+    def test_create_app_reads_booklet_env_at_call_time(self):
+        from unittest.mock import patch
+        from ledger_pipeline.service import create_app
+        with patch.dict(os.environ, {"BOOKLET_USER": "keeper", "BOOKLET_PASSWORD": "late-bound"}):
+            c = create_app().test_client()
+        r = c.post("/booklet", data={"username": "keeper", "password": "late-bound"})
+        self.assertEqual(r.status_code, 302)
+        self.assertIn("booklet_auth=" + hashlib.sha256(b"keeper:late-bound:booklet-salt-2026").hexdigest(),
+                      r.headers["Set-Cookie"])
+
+    # (c) wrong credentials ----------------------------------------------------------------
+    def test_wrong_credentials_rejected(self):
+        c = self.client(Settings(pipeline_token="tok", booklet_password="right-pw"))
+        for user, pw in [("admin", "wrong-pw"), ("admin", ""), ("admin", "RIGHT-PW"),
+                         ("someone", "right-pw"), ("管理员", "密码")]:
+            r = c.post("/booklet", data={"username": user, "password": pw})
+            self.assertEqual(r.status_code, 401, (user, pw))
+            self.assertNotIn("Set-Cookie", r.headers)
+            self.assertIn("用户名或密码错误", r.get_data(as_text=True))
+
+        for user, pw in [("admin", "wrong-pw"), ("admin", ""), ("someone", "right-pw"), ("管理员", "密码")]:
+            self.assert_login_page(c.get("/booklet", headers=self.basic(user, pw)))
+
+        wrong_pw_token = hashlib.sha256(b"admin:wrong-pw:booklet-salt-2026").hexdigest()
+        self.assert_cookies_rejected(c, [wrong_pw_token, self.EMPTY_PASSWORD_TOKEN, "not-a-token"])
+
+        # a non-basic Authorization header must not crash the credential check
+        self.assert_login_page(c.get("/booklet", headers={"Authorization": "Bearer wrong"}))
+        self.assert_booklet(c.get("/booklet", headers={"Authorization": "Bearer tok"}))
+
+    def test_wrong_credentials_echo_escaped_username(self):
+        c = self.client(Settings(booklet_password="right-pw"))
+        r = c.post("/booklet", data={"username": '"><script>x</script>', "password": "wrong-pw"})
+        self.assertEqual(r.status_code, 401)
+        self.assertNotIn("Set-Cookie", r.headers)
+        body = r.get_data(as_text=True)
+        self.assertNotIn("<script>x</script>", body)
+        self.assertIn('value="&quot;&gt;&lt;script&gt;x&lt;/script&gt;"', body)
+
+
 if __name__ == "__main__":
     unittest.main()
