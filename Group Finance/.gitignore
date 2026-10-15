@@ -1,1 +1,109 @@
+# ==============================================================================
+# Sensitive Credentials, Keys & Secrets
+# ==============================================================================
+*.env
+*.env.*
+.env
+.env.*
+*.pem
+*.key
+*.pkcs12
+*.pfx
+*.p12
+*.cer
+*.crt
+*credentials*.json
+*service_account*.json
+*service-account*.json
+client_secret*.json
+token.json
+tokens.json
+
+# ==============================================================================
+# Terraform (Sensitive State & Secrets & Binaries)
+# ==============================================================================
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+crash.log
+
+# ==============================================================================
+# Sensitive Financial Documents & Ledger Databases
+# ==============================================================================
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.docx
+*.doc
+*小组奉献资料库*
+*Booklet*
+Group Finance/小组奉献 - Project editor - Apps Script*
+Group Finance/pipeline/preview_site/data/*.json
+
+# ==============================================================================
+# Python & Virtual Environments
+# ==============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# ==============================================================================
+# Operating System & IDE Artifacts
+# ==============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ==============================================================================
+# Git & Agent Worktrees
+# ==============================================================================
 worktrees/
+.claude/worktrees/
