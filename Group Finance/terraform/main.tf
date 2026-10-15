@@ -293,20 +293,22 @@ resource "google_cloud_run_v2_service" "ledger_pipeline" {
       # version. Informational only; without these every CI run would show as drift.
       client,
       client_version,
-      # CI manages traffic: deploy --no-traffic, tag the candidate, smoke test, then
-      # update-traffic --to-latest. Traffic always ends as LATEST = 100%, so the revisions this
-      # config creates (env/secret changes) still receive traffic.
+      # CI manages traffic: deploy --no-traffic --tag cand-<sha7> (the tag is what makes Cloud Run
+      # start and health-check the 0% candidate), smoke test the tag URL, update-traffic
+      # --to-latest, then remove the tag. Traffic always ends as LATEST = 100%, so the revisions
+      # this config creates (env/secret changes) still receive traffic.
       traffic,
       # Deliberately NOT ignored:
       # - template[0].labels / template[0].annotations: gcloud only writes system keys
       #   (client.knative.dev/nonce, run.googleapis.com/client-name, ...), and the Cloud Run v2
       #   API (which this provider reads) does not return them, so they cause no drift.
-      # - template[0].revision: CI deploys without --tag/--revision-suffix, so the revision
-      #   name stays server-generated and empty here. If someone deploys by hand with --tag or
-      #   --revision-suffix, gcloud pins an explicit name: the plan then shows it going to null
-      #   and the apply simply creates a new revision. Ignoring the field would instead make
-      #   the next apply re-send that existing name, which Cloud Run rejects (revision names
-      #   are unique).
+      # - template[0].revision: CI deploys with --tag, so gcloud names the new revision itself
+      #   (<service>-<generation>-<random>) and pins that explicit name in the service template.
+      #   After a CI deploy `terraform plan` therefore shows template[0].revision going to null,
+      #   and the apply creates a fresh revision with a Cloud Run-generated name and the live
+      #   image. That is benign: the new revision gets traffic through LATEST = 100%. Ignoring the
+      #   field would still be wrong: the next apply would re-send the name CI pinned, which
+      #   already exists, and Cloud Run rejects it (revision names are unique).
     ]
   }
 
