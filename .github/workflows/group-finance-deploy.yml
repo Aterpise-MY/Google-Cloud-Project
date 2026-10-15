@@ -1,0 +1,251 @@
+# Group Finance production deploy: main == production, there is no staging environment.
+#
+# Push to main that changes what goes into the image -> full CI -> build + push
+# ledger-pipeline:sha-<commit> -> deploy that digest as a revision with NO traffic -> tag it ->
+# read-only smoke test on the tagged URL -> route LATEST = 100% -> remove the tag.
+# If anything fails, traffic never moves off the revision that was serving before.
+#
+# This workflow never runs Terraform. Terraform owns env, secrets, scaling and IAM, and ignores
+# image/traffic/client on the Cloud Run service (see Group Finance/terraform/main.tf).
+name: Group Finance Deploy
+
+on:
+  push:
+    branches: [main]
+    # Only changes that end up in the image. Workflow, tests-only, apps_script, terraform,
+    # deploy/, scripts/ and docs changes do not deploy. The exclusion must stay last.
+    paths:
+      - "Group Finance/pipeline/ledger_pipeline/**"
+      - "Group Finance/pipeline/frontend/**"
+      - "Group Finance/pipeline/preview_site/**"
+      - "Group Finance/pipeline/requirements.txt"
+      - "Group Finance/pipeline/Dockerfile"
+      - "Group Finance/pipeline/.dockerignore"
+      - "!**/*.md"
+  workflow_dispatch: # manual (re)deploy of main, unfiltered
+
+permissions: {}
+
+concurrency:
+  group: group-finance-production
+  cancel-in-progress: false # never abandon a deploy halfway through a traffic change
+
+env:
+  PROJECT_ID: group-511516
+  REGION: asia-southeast1
+  SERVICE: ledger-pipeline
+  IMAGE: asia-southeast1-docker.pkg.dev/group-511516/ledger/ledger-pipeline
+  # Not secrets: resource names. Trust is enforced by the WIF provider's attribute condition
+  # (repository id 1420258600 and refs/heads/main), managed in Group Finance/terraform/github_actions.tf.
+  WIF_PROVIDER: projects/997395841168/locations/global/workloadIdentityPools/github/providers/github-oidc
+  DEPLOYER_SA: gh-deployer@group-511516.iam.gserviceaccount.com
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/group-finance-ci.yml
+    with:
+      run_all: true
+    permissions:
+      contents: read
+      pull-requests: read # ceiling for the called workflow's `changes` job
+
+  deploy:
+    name: Deploy to Cloud Run (production)
+    needs: ci
+    # WIF only trusts refs/heads/main; skip, rather than fail auth, for a manual run on another branch.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC token for Workload Identity Federation
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Writes a short-lived credentials file into the workspace root. That is outside the
+      # docker build context ("Group Finance/pipeline"), so it can never end up in the image.
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+        with:
+          version: "589.0.0" # the gcloud release whose deploy/update-traffic behaviour this workflow relies on
+
+      - name: Record the revision currently serving traffic
+        id: before
+        run: |
+          gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT_ID" --format=json > "$RUNNER_TEMP/before.json"
+          prev=$(jq -r '[.status.traffic[]? | select((.percent // 0) > 0)] | max_by(.percent) | .revisionName // empty' "$RUNNER_TEMP/before.json")
+          split=$(jq -r '[.status.traffic[]? | select((.percent // 0) > 0) | "\(.revisionName)=\(.percent)"] | join(",")' "$RUNNER_TEMP/before.json")
+          if [ -z "$prev" ] || [ -z "$split" ]; then
+            echo "::error::Could not determine the revision currently serving traffic; refusing to deploy without a rollback target."
+            exit 1
+          fi
+          echo "Serving before deploy: $split"
+          echo "revision=$prev" >> "$GITHUB_OUTPUT"
+          echo "split=$split" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        id: image
+        run: |
+          tag="sha-${GITHUB_SHA}"
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker build --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            -t "${IMAGE}:${tag}" "Group Finance/pipeline"
+          docker push "${IMAGE}:${tag}"
+          digest=$(gcloud artifacts docker images describe "${IMAGE}:${tag}" --format='value(image_summary.digest)')
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Could not resolve the digest of ${IMAGE}:${tag} (got '${digest}')"
+            exit 1
+          fi
+          echo "Pushed ${IMAGE}:${tag} = ${digest}"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "ref=${IMAGE}@${digest}" >> "$GITHUB_OUTPUT"
+
+      # --no-traffic pins the current traffic to the revision serving it, so the new revision
+      # gets 0%. No --tag/--revision-suffix here: either would make gcloud write an explicit
+      # revision name into the service template, which Terraform would then see as drift.
+      - name: Deploy candidate revision (no traffic)
+        id: deploy
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          PREV: ${{ steps.before.outputs.revision }}
+        run: |
+          gcloud run deploy "$SERVICE" --image "$IMAGE_REF" --region "$REGION" --project "$PROJECT_ID" --no-traffic --quiet
+          gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT_ID" --format=json > "$RUNNER_TEMP/after.json"
+          rev=$(jq -r '.status.latestCreatedRevisionName // empty' "$RUNNER_TEMP/after.json")
+          ready=$(jq -r '.status.latestReadyRevisionName // empty' "$RUNNER_TEMP/after.json")
+          img=$(jq -r '.spec.template.spec.containers[0].image // empty' "$RUNNER_TEMP/after.json")
+          if [ "$img" != "$IMAGE_REF" ]; then
+            echo "::error::Service template image is '$img', expected '$IMAGE_REF'"; exit 1
+          fi
+          if [ -z "$rev" ] || [ "$rev" != "$ready" ] || [ "$rev" = "$PREV" ]; then
+            echo "::error::No new ready revision (latest created: '$rev', latest ready: '$ready', previous: '$PREV')"; exit 1
+          fi
+          echo "Candidate revision: $rev"
+          echo "revision=$rev" >> "$GITHUB_OUTPUT"
+
+      - name: Tag candidate revision
+        id: tag
+        env:
+          CANDIDATE: ${{ steps.deploy.outputs.revision }}
+        run: |
+          # Valid Cloud Run tag: lowercase letters, digits and hyphens, starting with a letter.
+          tag="cand-${GITHUB_SHA::7}"
+          # Record the name before mutating anything so the cleanup step runs even if this step fails.
+          echo "name=$tag" >> "$GITHUB_OUTPUT"
+          gcloud run services update-traffic "$SERVICE" --update-tags "${tag}=${CANDIDATE}" --region "$REGION" --project "$PROJECT_ID" --quiet
+          url=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT_ID" --format=json \
+            | jq -r --arg t "$tag" '[.status.traffic[]? | select(.tag == $t) | .url] | first // empty')
+          if [[ "$url" != https://* ]]; then
+            echo "::error::No URL for tag $tag"; exit 1
+          fi
+          echo "Candidate URL: $url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      # The candidate runs against PRODUCTION data (same Firestore, buckets and Apps Script).
+      # Read-only GETs only. Never /sync, /close, /api, or any POST from here.
+      - name: Smoke test candidate (read-only)
+        env:
+          URL: ${{ steps.tag.outputs.url }}
+        run: |
+          probe() { # path, check ("json-ok" or "status-only")
+            local path=$1 check=$2 code attempt
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              code=$(curl -s -o "$RUNNER_TEMP/smoke.out" -w '%{http_code}' --max-time 15 --proto '=https' "${URL}${path}") || true
+              if [ "$code" = "200" ] && { [ "$check" != "json-ok" ] || jq -e '.status == "ok"' "$RUNNER_TEMP/smoke.out" >/dev/null 2>&1; }; then
+                echo "GET ${path} -> 200 (attempt ${attempt})"
+                return 0
+              fi
+              echo "GET ${path} -> ${code} (attempt ${attempt}); retrying in 6 s"
+              sleep 6
+            done
+            echo "::error::GET ${path} on the candidate never returned the expected 200"
+            return 1
+          }
+          probe /healthz json-ok
+          probe /manage status-only
+
+      - name: Promote candidate (LATEST = 100%)
+        id: promote
+        env:
+          CANDIDATE: ${{ steps.deploy.outputs.revision }}
+        run: |
+          latest=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT_ID" --format='value(status.latestReadyRevisionName)')
+          if [ "$latest" != "$CANDIDATE" ]; then
+            echo "::error::Latest ready revision is '$latest', not the tested candidate '$CANDIDATE'; refusing to route traffic."
+            exit 1
+          fi
+          # LATEST (not the revision name), so revisions Terraform later creates for env/secret
+          # changes receive traffic too.
+          gcloud run services update-traffic "$SERVICE" --to-latest --region "$REGION" --project "$PROJECT_ID" --quiet
+          gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT_ID" --format=json \
+            | jq -e --arg r "$CANDIDATE" '[.status.traffic[]? | select(.latestRevision == true and .percent == 100 and .revisionName == $r)] | length == 1' >/dev/null \
+            || { echo "::error::Traffic is not LATEST = 100% on $CANDIDATE after update-traffic"; exit 1; }
+          echo "Traffic: LATEST = 100% -> $CANDIDATE"
+
+      - name: Remove candidate tag
+        if: always() && steps.tag.outputs.name != ''
+        env:
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          if gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT_ID" --format=json \
+              | jq -e --arg t "$TAG" '[.spec.traffic[]? | select(.tag == $t)] | length > 0' >/dev/null; then
+            gcloud run services update-traffic "$SERVICE" --remove-tags "$TAG" --region "$REGION" --project "$PROJECT_ID" --quiet
+            echo "Removed tag $TAG"
+          else
+            echo "Tag $TAG not present; nothing to remove"
+          fi
+
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          CANDIDATE: ${{ steps.deploy.outputs.revision }}
+          PREV: ${{ steps.before.outputs.revision }}
+          PREV_SPLIT: ${{ steps.before.outputs.split }}
+          DEPLOYED: ${{ steps.deploy.outcome }}
+          PROMOTED: ${{ steps.promote.outcome }}
+        run: |
+          now=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT_ID" --format=json 2>/dev/null \
+            | jq -r '[.status.traffic[]? | select((.percent // 0) > 0) | "\(.revisionName)=\(.percent)%\(if .latestRevision then " (LATEST)" else "" end)"] | join(", ")') || now=""
+          {
+            echo "## Group Finance deploy: ${JOB_STATUS}"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+            echo "| Image digest | \`${DIGEST:-n/a}\` |"
+            echo "| Image | \`${IMAGE_REF:-n/a}\` |"
+            echo "| New revision | \`${CANDIDATE:-none created}\` |"
+            echo "| Previous revision | \`${PREV:-unknown}\` (traffic before deploy: \`${PREV_SPLIT:-unknown}\`) |"
+            echo "| Traffic now | \`${now:-unknown}\` |"
+            echo
+            # deploy step ran (success, or failure after creating a revision) but traffic never moved
+            if [ "$PROMOTED" != "success" ] && { [ "$DEPLOYED" = "success" ] || [ "$DEPLOYED" = "failure" ]; }; then
+              echo "Traffic was **not** moved to the candidate. It stays pinned by name to the revision(s) above, and the candidate tag (if any) has been removed."
+              echo "The service template now references the failed image. The next successful deploy restores LATEST = 100%."
+              echo "Until then, revisions created by \`terraform apply\` receive no traffic."
+              echo
+            fi
+            if [ -n "$PREV_SPLIT" ]; then
+              echo "### Rollback"
+              echo
+              echo '```bash'
+              echo "gcloud run services update-traffic ${SERVICE} --region ${REGION} --project ${PROJECT_ID} --to-revisions ${PREV_SPLIT}"
+              echo '```'
+              echo
+              echo "This pins traffic by revision name. The next successful deploy restores LATEST = 100%."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

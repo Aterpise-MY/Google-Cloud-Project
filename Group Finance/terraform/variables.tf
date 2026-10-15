@@ -67,7 +67,37 @@ variable "enable_custom_domain_mapping" {
 }
 
 variable "container_image" {
-  description = "Container image URL to deploy to Cloud Run. Defaults to public starter image if empty."
+  description = "Seed image used only when Terraform first creates the Cloud Run service. After that the GitHub Actions deploy workflow owns the image (ignore_changes), so changing this has no effect on an existing service."
   type        = string
   default     = "us-docker.pkg.dev/cloudrun/container/hello"
+}
+
+variable "booklet_password" {
+  description = "Optional booklet login password (BOOKLET_PASSWORD, stored in Secret Manager as ledger-booklet-password). If left blank, Terraform generates a 32-character alphanumeric password."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "github_repository" {
+  description = "GitHub repository (owner/name) that deploys the service. Informational only; trust is pinned to github_repository_id."
+  type        = string
+  default     = "Brendon20011007/Google-Cloud-Project"
+}
+
+variable "github_repository_id" {
+  description = "Numeric GitHub repository id allowed to deploy. A renamed or re-created repository gets a new id, so it cannot inherit this trust."
+  type        = string
+  default     = "1420258600"
+
+  validation {
+    condition     = can(regex("^[0-9]+$", var.github_repository_id))
+    error_message = "github_repository_id must be the numeric repository id (gh api repos/OWNER/REPO --jq .id)."
+  }
+}
+
+variable "github_deploy_branch" {
+  description = "The only branch whose workflows may obtain deployer credentials (production)."
+  type        = string
+  default     = "main"
 }

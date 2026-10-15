@@ -17,9 +17,9 @@ This file defines how the agent team works on this codebase. The session's main 
 | Orchestrator | main session (you) | Plans work, delegates tasks, reviews and approves every deliverable, reports to the user | none |
 | Sub-Orchestrator | `orchestrator` | Delegatable coordinator for a whole feature: plans the ownership split, spawns engineers, runs the approval loop, reports back to the main session. Writes no code. | none |
 | HR Manager | `hr-manager` | Hires (creates) and fires (removes) agents; maintains the roster | `.claude/agents/`, this roster section |
-| Backend Engineer | `backend-engineer` | Server-side logic, API endpoints, background jobs, and the tests that accompany them. Consumes the schema. | `Group Finance/pipeline/ledger_pipeline/` |
+| Backend Engineer | `backend-engineer` | Server-side logic, API endpoints, background jobs, and the tests that accompany them. Consumes the schema. | `Group Finance/pipeline/ledger_pipeline/`, `Group Finance/pipeline/apps_script/`, `Group Finance/pipeline/scripts/`, `Group Finance/pipeline/tests/` |
 | Frontend Engineer | `frontend-engineer` | UI, client-side code, styles, translations, and the asset-pipeline config | `Group Finance/pipeline/frontend/` |
-| DevOps Engineer | `devops-engineer` | Build, deploy, and local dev-environment plumbing. Verifies builds by inspecting output artifacts. Writes no application code, migrations, or tests. | `Group Finance/pipeline/deploy/` |
+| DevOps Engineer | `devops-engineer` | Build, deploy, and local dev-environment plumbing. Verifies builds by inspecting output artifacts. Writes no application code, migrations, or tests. | `Group Finance/pipeline/deploy/`, `Group Finance/terraform/`, `Group Finance/pipeline/Dockerfile`, `Group Finance/pipeline/.dockerignore`, `Group Finance/pipeline/.gcloudignore`, `.github/workflows/` (repository root) |
 
 Agent definitions live in `.claude/agents/`. The roster table above must be kept in sync with that directory — updating it is the HR Manager's job.
 

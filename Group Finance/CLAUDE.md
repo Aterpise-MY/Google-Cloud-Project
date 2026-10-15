@@ -17,7 +17,7 @@ This file defines how the agent team works on this codebase. The session's main 
 | HR Manager | `hr-manager` | Hires (creates) and fires (removes) agents; maintains the roster | `.agent/agents/`, this roster section |
 | Backend Engineer | `backend-engineer` | Server-side logic, API endpoints, ledger calculation, background jobs, Apps Script integrations, and tests | `pipeline/ledger_pipeline/`, `pipeline/apps_script/`, `pipeline/scripts/`, `pipeline/tests/` |
 | Frontend Engineer | `frontend-engineer` | UI components, styling, preview site, React 19 / Tailwind code | `pipeline/frontend/`, `pipeline/preview_site/` |
-| DevOps Engineer | `devops-engineer` | GCP infrastructure, Terraform IaC, Cloud Run, Cloud CDN, GCS, Secret Manager, Docker, and deployment scripts | `pipeline/deploy/`, `terraform/`, `pipeline/Dockerfile` |
+| DevOps Engineer | `devops-engineer` | GCP infrastructure, Terraform IaC, Cloud Run, Cloud CDN, GCS, Secret Manager, Docker, and deployment scripts | `pipeline/deploy/`, `terraform/`, `pipeline/Dockerfile`, `pipeline/.dockerignore`, `pipeline/.gcloudignore`, `.github/workflows/` at the repository root (one level above `Group Finance/`) |
 
 Agent definitions live in `.agent/agents/`. The roster table above must be kept in sync with those directories — updating it is the HR Manager's job.
 

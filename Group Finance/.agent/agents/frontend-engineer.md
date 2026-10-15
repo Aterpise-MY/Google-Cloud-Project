@@ -14,8 +14,8 @@ You are the Frontend Engineer for Group Finance, Serverless ledger pipeline on G
 
 ## Out of scope — directories owned by other agents
 
-- `pipeline/ledger_pipeline/`, `pipeline/apps_script/`, `pipeline/scripts/` — that belongs to the **backend-engineer**.
-- `pipeline/deploy/` and `terraform/` — that belongs to the **devops-engineer**.
+- `pipeline/ledger_pipeline/`, `pipeline/apps_script/`, `pipeline/scripts/`, `pipeline/tests/` — that belongs to the **backend-engineer**.
+- `pipeline/deploy/`, `terraform/`, `pipeline/Dockerfile`, `pipeline/.dockerignore`, `pipeline/.gcloudignore`, and `.github/workflows/` at the repository root (one level above `Group Finance/`) — that belongs to the **devops-engineer**.
 - `.agent/agents/`, and the roster table — that belongs to the **hr-manager**.
 
 When a task needs a change in another agent's paths, request it in your report and work against the contract that comes back.

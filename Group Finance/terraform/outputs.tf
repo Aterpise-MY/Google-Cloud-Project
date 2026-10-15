@@ -9,6 +9,22 @@ output "pipeline_token" {
   sensitive   = true
 }
 
+output "booklet_password" {
+  description = "Booklet login password (BOOKLET_PASSWORD); user name is admin. Read with: terraform output -raw booklet_password"
+  value       = local.booklet_password
+  sensitive   = true
+}
+
+output "github_workload_identity_provider" {
+  description = "Full WIF provider resource name for google-github-actions/auth (workload_identity_provider)"
+  value       = google_iam_workload_identity_pool_provider.github_oidc.name
+}
+
+output "github_deployer_service_account" {
+  description = "Service account the deploy workflow impersonates (google-github-actions/auth service_account)"
+  value       = google_service_account.gh_deployer.email
+}
+
 output "site_bucket" {
   description = "The public GCS site bucket name"
   value       = google_storage_bucket.site_bucket.name
@@ -39,6 +55,7 @@ output "next_steps" {
     2. Direct Cloud Run Access (No Load Balancer, $0 Base Cost):
        - Manage Web App: ${google_cloud_run_v2_service.ledger_pipeline.uri}/manage
        - Booklet View:   ${google_cloud_run_v2_service.ledger_pipeline.uri}/booklet
+         (user admin, password: run terraform output -raw booklet_password)
     3. Custom Domain Setup (Choose one):
        - Option A (Cloudflare Free CDN - Recommended):
          In Cloudflare DNS, add a CNAME for ${local.clean_domain != "" ? local.clean_domain : "your-subdomain"} pointing to:
