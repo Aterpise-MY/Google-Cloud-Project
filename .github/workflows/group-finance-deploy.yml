@@ -172,7 +172,8 @@ jobs:
             echo "::error::GET ${path} on the candidate never returned the expected 200"
             return 1
           }
-          probe /healthz json-ok
+          # Cloud Run reserves /healthz (Google Frontend answers 404), so probe /health.
+          probe /health json-ok
           probe /manage status-only
 
       - name: Promote candidate (LATEST = 100%)

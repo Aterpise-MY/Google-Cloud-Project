@@ -259,6 +259,18 @@ class SecurityAndServiceTests(unittest.TestCase):
         self.assertFalse(verify_netlify_signature("garbage", body, "s3"))
         self.assertFalse(verify_netlify_signature(None, body, "s3"))
 
+    def test_health_aliases(self):
+        from ledger_pipeline.service import create_app
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        s = Settings(pipeline_token="tok", netlify_jws_secret="nf")
+        p = Pipeline(s, FakeSource(sheets_fixture()), LocalStorage(tmp.name), drive=FakeDrive(),
+                     pdf=lambda h: b"pdf", now=at(2026, 10, 14))
+        c = create_app(s, p).test_client()
+        for path in ("/health", "/healthz"):
+            r = c.get(path)
+            self.assertEqual(r.status_code, 200, path)
+            self.assertEqual(r.get_json(), {"status": "ok"}, path)
+
     def test_token(self):
         self.assertTrue(verify_token({"X-Pipeline-Token": "t"}, "t"))
         self.assertTrue(verify_token({"Authorization": "Bearer t"}, "t"))
