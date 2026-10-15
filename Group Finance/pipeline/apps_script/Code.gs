@@ -557,11 +557,15 @@ function repairWorkbook() {
 
 /**
  * Helper: Hash a password for the Users sheet.
- * Edit the password below, run the function in the editor, read the hash in the logs - then REMOVE the
- * password from the code again (do not leave a real password in the script).
+ * Type the password into the empty placeholder below, run the function in the editor, read the hash in the
+ * logs - then REMOVE the password from the code again (do not leave a real password in the script).
+ * Only the hash is logged; running it with the placeholder still empty throws instead of hashing "".
  */
 function getPasswordHash() {
-  const password = "CHANGE_ME"; // <-- type the password here, run, copy the hash, then delete it again
+  const password = ""; // <-- type the password here, run, copy the hash, then delete it again
+  if (!password) {
+    throw new Error("getPasswordHash: type the password into the empty placeholder first (and delete it again afterwards).");
+  }
   const hash = hashPassword(password);
   Logger.log("Hash:     " + hash);
 }

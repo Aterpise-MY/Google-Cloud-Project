@@ -31,6 +31,65 @@
   <script>
     window.__API_URL__ = "/api";
   </script>
+  <script id="auth-guard">
+    // Session handling for POST /api (server-side cookie session, issue #5).
+    // Wraps window.fetch: a 401 with code "auth_required" means the session cookie is
+    // missing or expired, so drop the local "logged in" hint and reload to the login form.
+    // A login 401 ("Invalid credentials") has no code and is left for the app to show.
+    (function() {
+      var NOTICE_KEY = "sessionExpiredNotice";
+      var expiring = false;
+
+      function isApiPost(input, init) {
+        try {
+          var url = typeof input === "string" ? input : (input && input.url) || String(input);
+          var method = (init && init.method) || (input && input.method) || "GET";
+          return String(method).toUpperCase() === "POST" &&
+            new URL(url, window.location.href).pathname === "/api";
+        } catch (e) {
+          return false;
+        }
+      }
+
+      function onSessionExpired() {
+        if (expiring) return;
+        expiring = true;
+        try {
+          localStorage.removeItem("sessionToken");
+          localStorage.removeItem("currentUser");
+          sessionStorage.setItem(NOTICE_KEY, "1");
+        } catch (e) {}
+        window.location.reload();
+      }
+
+      var originalFetch = window.fetch;
+      window.fetch = function(input, init) {
+        var promise = originalFetch.apply(this, arguments);
+        if (!isApiPost(input, init)) return promise;
+        return promise.then(function(response) {
+          try {
+            if (response.status === 401) {
+              response.clone().json().then(function(body) {
+                if (body && body.code === "auth_required") onSessionExpired();
+              }).catch(function() {});
+            } else if (response.ok) {
+              // A successful call means the user is signed in: the expiry notice is stale.
+              sessionStorage.removeItem(NOTICE_KEY);
+              var notice = document.getElementById("session-notice");
+              if (notice) notice.style.display = "none";
+            }
+          } catch (e) {}
+          return response;
+        });
+      };
+
+      window.addEventListener("DOMContentLoaded", function() {
+        var notice = document.getElementById("session-notice");
+        var show = sessionStorage.getItem(NOTICE_KEY) === "1" && !localStorage.getItem("sessionToken");
+        if (notice && show) notice.style.display = "block";
+      });
+    })();
+  </script>
   <script type="module" crossorigin src="/assets/index-Chv3jFTT.js"></script>
 </head>
 <body class="bg-slate-50 min-h-screen">
@@ -41,6 +100,9 @@
         📖 查看每月奉献册子 ↗
       </a>
     </div>
+
+    <!-- Shown after a session-expiry redirect; hidden again on the next successful API call -->
+    <div id="session-notice" role="status" style="display: none;" class="max-w-md mx-auto mt-3 px-4 py-2 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg text-center">登录已过期，请重新登录。</div>
 
     <!-- React will mount the entire application inside this div -->
     <div id="root"></div>

@@ -248,11 +248,14 @@ function doGet(e) {
 
 /**
  * 工具函数：生成密码哈希值，用于在 Users 表中填入密码
- * 使用方法：修改下方密码后，在 GAS 编辑器中运行此函数，然后查看 Logs 获取哈希值
+ * 使用方法：在下方空字符串中临时填入密码，在 GAS 编辑器中运行此函数，从 Logs 复制哈希值，然后立即删除密码。
+ * Only the hash is logged. Never leave (or commit) a real password in this file.
  */
 function getPasswordHash() {
-  const password = "Abc1234#"; // <-- 修改为你的密码
+  const password = ""; // <-- 临时填入密码，运行并复制哈希后立即删除 / type it, run, copy the hash, delete it again
+  if (!password) {
+    throw new Error("getPasswordHash: type the password into the empty placeholder first (and delete it again afterwards).");
+  }
   const hash = hashPassword(password);
-  Logger.log("Password: " + password);
   Logger.log("Hash:     " + hash);
 }

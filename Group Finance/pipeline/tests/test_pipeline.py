@@ -12,7 +12,10 @@ HERE = os.path.dirname(__file__)
 import sys
 sys.path.insert(0, os.path.join(HERE, ".."))
 
+from unittest.mock import MagicMock, patch
+
 from ledger_pipeline.config import Settings
+from ledger_pipeline.firestore_db import FirestoreLedgerDB
 from ledger_pipeline.ledger import (RawSheet, build_months, parse_date, parse_money, parse_sheet_name)
 from ledger_pipeline.pipeline import Pipeline, parse_ym
 from ledger_pipeline.render import render_all_months_html, render_month_card, render_month_html
@@ -21,6 +24,45 @@ from ledger_pipeline.storage import LocalStorage
 import tempfile
 
 CORRECTED = os.path.join(HERE, "..", "..", "小组奉献资料库_corrected.xlsx")
+
+# Users seeded into the in-memory store for /api tests (never real credentials).
+TEST_USER = "treasurer"
+TEST_PASSWORD = "correct-horse-battery-1"
+OLD_ADMIN_PASSWORD = "Abc1234#"          # the formerly hard-coded fallback; must never log in again
+OLD_ADMIN_SHA256 = hashlib.sha256(OLD_ADMIN_PASSWORD.encode()).hexdigest()
+
+_no_firestore = patch.object(FirestoreLedgerDB, "_init_client", lambda self: setattr(self, "_client", None))
+
+
+def setUpModule():
+    # FirestoreLedgerDB defaults to the production project: no test may ever create a real client.
+    # Every DB in this module starts as the in-memory store; tests that need a client attach a MagicMock.
+    _no_firestore.start()
+
+
+def tearDownModule():
+    _no_firestore.stop()
+
+
+def memory_db(*users):
+    """In-memory FirestoreLedgerDB with (username, password) users seeded via set_user."""
+    db = FirestoreLedgerDB("test-no-firestore")
+    assert not db.has_client
+    for user, password in users or [(TEST_USER, TEST_PASSWORD)]:
+        db.set_user(user, password)
+    return db
+
+
+def https_client(app):
+    """Test client that talks https to the app, as a browser must for the Secure session cookie."""
+    app.config["PREFERRED_URL_SCHEME"] = "https"
+    return app.test_client()
+
+
+def login(c, username=TEST_USER, password=TEST_PASSWORD):
+    r = c.post("/api", json={"action": "login", "username": username, "password": password})
+    assert r.status_code == 200, (r.status_code, r.get_json())
+    return r
 
 
 def sheets_fixture():
@@ -273,7 +315,7 @@ class SecurityAndServiceTests(unittest.TestCase):
         s = Settings(pipeline_token="tok", netlify_jws_secret="nf")
         p = Pipeline(s, FakeSource(sheets_fixture()), LocalStorage(tmp.name), drive=drive,
                      pdf=lambda h: b"pdf", now=at(2026, 10, 14))
-        c = create_app(s, p).test_client()
+        c = https_client(create_app(s, p, db=memory_db()))
         self.assertEqual(c.get("/healthz").status_code, 200)
         self.assertEqual(c.post("/sync").status_code, 401)
         self.assertEqual(c.post("/sync", headers={"X-Pipeline-Token": "wrong"}).status_code, 401)
@@ -293,11 +335,13 @@ class SecurityAndServiceTests(unittest.TestCase):
 
         # /api tests
         # 1. Login
-        r_login_fail = c.post("/api", json={"action": "login", "username": "admin", "password": "wrongpassword"})
+        r_login_fail = c.post("/api", json={"action": "login", "username": TEST_USER, "password": "wrongpassword"})
         self.assertEqual(r_login_fail.status_code, 401)
-        r_login_ok = c.post("/api", json={"action": "login", "username": "admin", "password": "Abc1234#"})
+        r_old_admin = c.post("/api", json={"action": "login", "username": "admin", "password": OLD_ADMIN_PASSWORD})
+        self.assertEqual(r_old_admin.status_code, 401)
+        r_login_ok = c.post("/api", json={"action": "login", "username": TEST_USER, "password": TEST_PASSWORD})
         self.assertEqual(r_login_ok.status_code, 200)
-        self.assertEqual(r_login_ok.get_json()["status"], "success")
+        self.assertEqual(r_login_ok.get_json(), {"status": "success", "user": TEST_USER})
 
         # 2. Yearly summary
         r_sum = c.post("/api", json={"action": "get_yearly_summary", "year": 2026})
@@ -309,7 +353,8 @@ class SecurityAndServiceTests(unittest.TestCase):
         self.assertIn("balance", sum_data)
 
         # 3. Add record
-        r_add = c.post("/api", json={"date": "2026-10-14", "item": "测试同工会", "income": 50, "expense": 0})
+        r_add = c.post("/api", json={"action": "add_record", "date": "2026-10-14", "item": "测试同工会",
+                                     "income": 50, "expense": 0})
         self.assertEqual(r_add.status_code, 200)
         add_data = r_add.get_json()
         self.assertEqual(add_data["status"], "success")
@@ -393,7 +438,8 @@ class RecordDeletionTests(unittest.TestCase):
         s = Settings(pipeline_token="tok")
         src = XlsxSource(xlsx_path)
         p = Pipeline(s, src, LocalStorage(tmp.name), pdf=lambda h: b"pdf", now=at(2026, 8, 25))
-        c = create_app(s, p).test_client()
+        c = https_client(create_app(s, p, db=memory_db()))
+        login(c)
 
         # Delete "小组奉献"
         r = c.post("/api", json={
@@ -423,15 +469,16 @@ class RecordDeletionTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         s = Settings(pipeline_token="tok")
         p = Pipeline(s, FakeSource(sheets_fixture()), LocalStorage(tmp.name), pdf=lambda h: b"pdf", now=at(2026, 10, 14))
-        c = create_app(s, p).test_client()
+        c = https_client(create_app(s, p, db=memory_db()))
+        login(c)
 
         # Empty item and 0 amounts
-        r = c.post("/api", json={"date": "2026-10-14", "item": "", "income": 0, "expense": 0})
+        r = c.post("/api", json={"action": "add_record", "date": "2026-10-14", "item": "", "income": 0, "expense": 0})
         self.assertEqual(r.status_code, 400)
         self.assertEqual(r.get_json()["message"], "事项或金额不能为空")
 
         # Empty item with spaces and 0 amounts
-        r2 = c.post("/api", json={"date": "2026-10-14", "item": "   ", "income": 0, "expense": 0})
+        r2 = c.post("/api", json={"action": "add_record", "date": "2026-10-14", "item": "   ", "income": 0, "expense": 0})
         self.assertEqual(r2.status_code, 400)
         self.assertEqual(r2.get_json()["message"], "事项或金额不能为空")
 
@@ -456,7 +503,8 @@ class RecordDeletionTests(unittest.TestCase):
             s = Settings(pipeline_token="tok")
             # p.source is FakeSource, NOT XlsxSource
             p = Pipeline(s, FakeSource(sheets_fixture()), LocalStorage(tmp.name), pdf=lambda h: b"pdf", now=at(2026, 8, 25))
-            c = create_app(s, p).test_client()
+            c = https_client(create_app(s, p, db=memory_db()))
+            login(c)
 
             r = c.post("/api", json={
                 "action": "delete_record",
@@ -499,7 +547,8 @@ class RecordDeletionTests(unittest.TestCase):
         s = Settings(pipeline_token="tok")
         src = XlsxSource(xlsx_path)
         p = Pipeline(s, src, LocalStorage(tmp.name), pdf=lambda h: b"pdf", now=at(2026, 10, 20))
-        c = create_app(s, p).test_client()
+        c = https_client(create_app(s, p, db=memory_db()))
+        login(c)
 
         # Delete phantom row
         r = c.post("/api", json={
@@ -561,7 +610,7 @@ class RecordDeletionTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         s = Settings(pipeline_token="tok")
         p = Pipeline(s, FakeSource(sheets_fixture()), LocalStorage(tmp.name), pdf=lambda h: b"pdf", now=at(2026, 10, 14))
-        c = create_app(s, p).test_client()
+        c = https_client(create_app(s, p, db=memory_db()))
 
         # 1. Favicon returns 204
         r_fav = c.get("/favicon.ico")
@@ -573,9 +622,15 @@ class RecordDeletionTests(unittest.TestCase):
         self.assertEqual(r_empty.get_json()["message"], "请求体不能为空。")
 
         # 3. POST /api without application/json (e.g. text/plain)
+        r_old = c.post(
+            "/api",
+            data=json.dumps({"action": "login", "username": "admin", "password": OLD_ADMIN_PASSWORD}),
+            content_type="text/plain"
+        )
+        self.assertEqual(r_old.status_code, 401)
         r_login = c.post(
             "/api",
-            data=json.dumps({"action": "login", "username": "admin", "password": "Abc1234#"}),
+            data=json.dumps({"action": "login", "username": TEST_USER, "password": TEST_PASSWORD}),
             content_type="text/plain"
         )
         self.assertEqual(r_login.status_code, 200)
@@ -678,7 +733,7 @@ class BookletAuthTests(unittest.TestCase):
     # (b) password from env ----------------------------------------------------------------
     def test_password_from_env_login_sets_cookie_that_validates(self):
         from unittest.mock import patch
-        with patch.dict(os.environ, {"BOOKLET_PASSWORD": "env-Test-pw#1"}):
+        with patch.dict(os.environ, {"BOOKLET_PASSWORD": "env-Test-pw#1", "PIPELINE_TOKEN": "tok"}):
             s = Settings.from_env()
         self.assertEqual(s.booklet_password, "env-Test-pw#1")
         self.assertNotIn("env-Test-pw#1", repr(s))           # secret kept out of reprs/logs
@@ -748,6 +803,472 @@ class BookletAuthTests(unittest.TestCase):
         body = r.get_data(as_text=True)
         self.assertNotIn("<script>x</script>", body)
         self.assertIn('value="&quot;&gt;&lt;script&gt;x&lt;/script&gt;"', body)
+
+
+class ApiAuthTests(unittest.TestCase):
+    """POST /api: session cookie / pipeline token / booklet auth (delete only); everything else is 401."""
+
+    ADD = {"action": "add_record", "date": "2026-10-14", "item": "测试奉献", "income": 20, "expense": 0}
+    DELETE = {"action": "delete_record", "year": 2026, "month": 10, "date": "2026-10-14",
+              "item": "测试奉献", "income": 20, "expense": 0}
+    SUMMARY = {"action": "get_yearly_summary", "year": 2026}
+    AUTH_REQUIRED = {"status": "error", "code": "auth_required", "message": "登录已过期或未登录，请重新登录。"}
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        # never touch a real workbook from these tests
+        xp = patch("ledger_pipeline.service.get_xlsx_path", return_value=None)
+        xp.start()
+        self.addCleanup(xp.stop)
+        self.settings = Settings(pipeline_token="tok", booklet_password="booklet-pw")
+        self.db = memory_db()
+        self.db.add_transaction = MagicMock(wraps=self.db.add_transaction)
+        self.db.delete_transaction = MagicMock(wraps=self.db.delete_transaction)
+        self.c = self.make_client(self.settings, self.db)
+
+    def make_client(self, settings, db):
+        from ledger_pipeline.service import create_app
+        p = Pipeline(settings, FakeSource(sheets_fixture()), LocalStorage(self.tmp.name),
+                     pdf=lambda h: b"pdf", now=at(2026, 10, 14))
+        return https_client(create_app(settings, p, db=db))
+
+    def assert_auth_required(self, r):
+        self.assertEqual(r.status_code, 401, r.get_json())
+        self.assertEqual(r.get_json(), self.AUTH_REQUIRED)
+
+    def assert_no_writes(self):
+        self.db.add_transaction.assert_not_called()
+        self.db.delete_transaction.assert_not_called()
+        self.assertEqual(self.db._memory_tx, [])
+        self.assertEqual(os.listdir(self.tmp.name), [])     # publish_site() never ran
+
+    def session_cookie(self):
+        from ledger_pipeline.service import SESSION_COOKIE
+        cookie = self.c.get_cookie(SESSION_COOKIE)
+        return cookie.value if cookie else None
+
+    # --- unauthenticated -------------------------------------------------------------------
+    def test_no_session_is_401_for_every_action_without_db_write(self):
+        for body in (self.SUMMARY, self.ADD, self.DELETE):
+            self.assert_auth_required(self.c.post("/api", json=body))
+        # a missing action is not an implicit add_record any more
+        self.assert_auth_required(self.c.post("/api", json={"item": "x", "income": 5}))
+        self.assert_auth_required(self.c.post("/api", data=json.dumps(self.ADD), content_type="text/plain"))
+        self.assert_no_writes()
+
+    def test_tampered_forged_and_wrong_payload_cookies_are_401(self):
+        from itsdangerous import URLSafeTimedSerializer
+        from ledger_pipeline.service import SESSION_COOKIE, SESSION_SALT, session_serializer
+        login(self.c)
+        good = self.session_cookie()
+        self.assertTrue(good)
+        self.assertEqual(self.c.post("/api", json=self.SUMMARY).status_code, 200)
+
+        flipped = good[:-1] + ("A" if good[-1] != "A" else "B")
+        payload, ts_sig = good.split(".", 1)
+        swapped_payload = URLSafeTimedSerializer("x").dumps({"u": "admin"}).split(".", 1)[0] + "." + ts_sig
+        forged = [
+            flipped,                                                            # signature tampered
+            swapped_payload,                                                    # payload swapped
+            session_serializer("not-the-token").dumps({"u": TEST_USER}),        # wrong secret
+            URLSafeTimedSerializer("tok", salt="other-salt").dumps({"u": TEST_USER}),  # wrong salt
+            URLSafeTimedSerializer("tok", salt=SESSION_SALT).dumps({"u": TEST_USER}),  # wrong digest (sha1)
+            session_serializer("tok").dumps({"u": "../users/admin"}),           # invalid username
+            session_serializer("tok").dumps({"u": "Treasurer"}),                # not normalised
+            session_serializer("tok").dumps(["treasurer"]),                     # wrong payload shape
+            "auth-admin", "authenticated", "", "a.b.c",                         # old/legacy tokens, garbage
+        ]
+        for value in forged:
+            self.c.set_cookie(SESSION_COOKIE, value)
+            for body in (self.SUMMARY, self.ADD, self.DELETE):
+                self.assert_auth_required(self.c.post("/api", json=body))
+        self.assert_no_writes()
+
+        # the correctly signed payload is accepted from any client (stateless), proving the forgeries differ only in signing
+        self.c.set_cookie(SESSION_COOKIE, session_serializer("tok").dumps({"u": TEST_USER}))
+        self.assertEqual(self.c.post("/api", json=self.SUMMARY).status_code, 200)
+
+    def test_expired_cookie_is_401_and_age_is_checked_on_every_request(self):
+        import time
+        from ledger_pipeline.service import SESSION_COOKIE, SESSION_MAX_AGE, session_serializer
+        now = time.time()
+        with patch("itsdangerous.timed.time.time", return_value=now - SESSION_MAX_AGE - 5):
+            expired = session_serializer("tok").dumps({"u": TEST_USER})
+        with patch("itsdangerous.timed.time.time", return_value=now - SESSION_MAX_AGE + 60):
+            almost = session_serializer("tok").dumps({"u": TEST_USER})
+        self.c.set_cookie(SESSION_COOKIE, expired)
+        self.assert_auth_required(self.c.post("/api", json=self.SUMMARY))
+        self.c.set_cookie(SESSION_COOKIE, almost)
+        self.assertEqual(self.c.post("/api", json=self.SUMMARY).status_code, 200)
+
+        # a cookie issued by login stops working once 12 hours have passed
+        login(self.c)
+        self.assertEqual(self.c.post("/api", json=self.SUMMARY).status_code, 200)
+        with patch("itsdangerous.timed.time.time", return_value=time.time() + SESSION_MAX_AGE + 5):
+            self.assert_auth_required(self.c.post("/api", json=self.ADD))
+        self.assert_no_writes()
+
+    def test_old_hardcoded_admin_password_is_rejected(self):
+        for pw in (OLD_ADMIN_PASSWORD, OLD_ADMIN_SHA256):
+            r = self.c.post("/api", json={"action": "login", "username": "admin", "password": pw})
+            self.assertEqual(r.status_code, 401)
+            self.assertEqual(r.get_json(), {"status": "error", "message": "Invalid credentials"})
+            self.assertNotIn("Set-Cookie", r.headers)
+
+        # Firestore present but the lookup raises: still no fallback account
+        db = FirestoreLedgerDB("test-no-firestore")
+        db._client = MagicMock()
+        db._client.collection.return_value.document.return_value.get.side_effect = RuntimeError("unavailable")
+        c = self.make_client(self.settings, db)
+        with self.assertLogs("ledger.firestore", level="ERROR") as logs:
+            r = c.post("/api", json={"action": "login", "username": "admin", "password": OLD_ADMIN_PASSWORD})
+        self.assertEqual(r.status_code, 401)
+        self.assertNotIn("Set-Cookie", r.headers)
+        self.assertFalse(any(OLD_ADMIN_PASSWORD in m for m in logs.output))
+
+    # --- other credentials -----------------------------------------------------------------
+    def test_pipeline_token_is_allowed(self):
+        for headers in ({"X-Pipeline-Token": "tok"}, {"Authorization": "Bearer tok"}):
+            self.assertEqual(self.c.post("/api", json=self.SUMMARY, headers=headers).status_code, 200)
+        r = self.c.post("/api", json=dict(self.ADD, user="mallory"), headers={"X-Pipeline-Token": "tok"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.db._memory_tx[-1]["user"], "pipeline")
+        r = self.c.post("/api", json=self.DELETE, headers={"X-Pipeline-Token": "tok"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.db._memory_tx, [])
+        for headers in ({"X-Pipeline-Token": "wrong"}, {"Authorization": "Bearer wrong"}, {"X-Pipeline-Token": ""}):
+            self.assert_auth_required(self.c.post("/api", json=self.SUMMARY, headers=headers))
+
+    def test_booklet_auth_may_delete_only(self):
+        from ledger_pipeline.service import BOOKLET_COOKIE, booklet_token
+        self.c.set_cookie(BOOKLET_COOKIE, booklet_token("admin", "booklet-pw"))
+        self.assert_auth_required(self.c.post("/api", json=self.ADD))
+        self.assert_auth_required(self.c.post("/api", json=self.SUMMARY))
+        self.assert_no_writes()
+        r = self.c.post("/api", json=self.DELETE)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["status"], "success")
+        self.db.delete_transaction.assert_called_once()
+        # a wrong booklet cookie does not authorise delete either
+        self.db.delete_transaction.reset_mock()
+        self.c.set_cookie(BOOKLET_COOKIE, booklet_token("admin", "wrong"))
+        self.assert_auth_required(self.c.post("/api", json=self.DELETE))
+        self.db.delete_transaction.assert_not_called()
+
+    # --- login / logout --------------------------------------------------------------------
+    def test_login_sets_strict_secure_httponly_session_cookie(self):
+        r = login(self.c, username="  TreasURER ")
+        self.assertEqual(r.get_json(), {"status": "success", "user": TEST_USER})   # no "token" field
+        cookie = r.headers["Set-Cookie"]
+        self.assertEqual(len(r.headers.getlist("Set-Cookie")), 1)
+        self.assertTrue(cookie.startswith("ledger_session="))
+        for attr in ("HttpOnly", "Secure", "SameSite=Strict", "Path=/", "Max-Age=43200"):
+            self.assertIn(attr, cookie)
+        self.assertNotIn(TEST_PASSWORD, cookie)
+        self.assertEqual(self.c.post("/api", json=self.SUMMARY).status_code, 200)
+
+    def test_login_validation(self):
+        for body in ({"action": "login"}, {"action": "login", "username": TEST_USER},
+                     {"action": "login", "username": "  ", "password": TEST_PASSWORD}):
+            r = self.c.post("/api", json=body)
+            self.assertEqual(r.status_code, 400)
+            self.assertEqual(r.get_json()["message"], "Username and password are required.")
+        for user, pw in [(TEST_USER, "wrong-password-123"), ("../treasurer", TEST_PASSWORD),
+                         ("nobody", TEST_PASSWORD), ("管理员", TEST_PASSWORD)]:
+            r = self.c.post("/api", json={"action": "login", "username": user, "password": pw})
+            self.assertEqual(r.status_code, 401, user)
+            self.assertNotIn("Set-Cookie", r.headers)
+
+    def test_login_disabled_without_pipeline_token(self):
+        for token in ("", "   "):
+            db = memory_db()
+            db.verify_user = MagicMock(wraps=db.verify_user)
+            with self.assertLogs("ledger", level="WARNING") as logs:
+                c = self.make_client(Settings(pipeline_token=token), db)
+            self.assertEqual(len([m for m in logs.output if "PIPELINE_TOKEN is not set" in m]), 1)
+            r = c.post("/api", json={"action": "login", "username": TEST_USER, "password": TEST_PASSWORD})
+            self.assertEqual(r.status_code, 503)
+            self.assertEqual(r.get_json(), {"status": "error", "code": "login_disabled",
+                                            "message": "登录尚未配置，请联系管理员。"})
+            self.assertNotIn("Set-Cookie", r.headers)
+            db.verify_user.assert_not_called()
+            # and no session cookie is accepted, whatever it was signed with
+            from itsdangerous import URLSafeTimedSerializer
+            from ledger_pipeline.service import SESSION_COOKIE, SESSION_SALT
+            c.set_cookie(SESSION_COOKIE, URLSafeTimedSerializer(token, salt=SESSION_SALT,
+                                                                signer_kwargs={"digest_method": hashlib.sha256}
+                                                                ).dumps({"u": TEST_USER}))
+            self.assert_auth_required(c.post("/api", json=self.SUMMARY))
+
+    def test_logout_clears_cookie_and_next_add_record_is_401(self):
+        login(self.c)
+        self.assertEqual(self.c.post("/api", json=self.SUMMARY).status_code, 200)
+        r = self.c.post("/api", json={"action": "logout"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json(), {"status": "success"})
+        cookie = r.headers["Set-Cookie"]
+        self.assertTrue(cookie.startswith("ledger_session=;"))
+        self.assertIn("Max-Age=0", cookie)
+        self.assertIn("Path=/", cookie)
+        self.assertIsNone(self.session_cookie())
+        self.assert_auth_required(self.c.post("/api", json=self.ADD))
+        self.assert_no_writes()
+        # idempotent and needs no session
+        self.assertEqual(self.c.post("/api", json={"action": "logout"}).status_code, 200)
+
+    # --- origin / action / author ------------------------------------------------------------
+    def test_cross_origin_is_403_and_same_origin_passes(self):
+        bad_origin = {"status": "error", "code": "bad_origin", "message": "Cross-origin request rejected."}
+        for origin in ("https://evil.example", "null", "https://localhost.evil.example",
+                       "https://localhost:8443", ""):
+            r = self.c.post("/api", json={"action": "login", "username": TEST_USER, "password": TEST_PASSWORD},
+                            headers={"Origin": origin})
+            self.assertEqual(r.status_code, 403, origin)
+            self.assertEqual(r.get_json(), bad_origin)
+            self.assertNotIn("Set-Cookie", r.headers)
+        login(self.c)
+        r = self.c.post("/api", json=self.ADD, headers={"Origin": "https://evil.example"})
+        self.assertEqual(r.status_code, 403)
+        r = self.c.post("/api", json=self.DELETE, headers={"Origin": "https://evil.example", "X-Pipeline-Token": "tok"})
+        self.assertEqual(r.status_code, 403)
+        self.assert_no_writes()
+        # an empty body is still reported first
+        r = self.c.post("/api", headers={"Origin": "https://evil.example"})
+        self.assertEqual((r.status_code, r.get_json()["message"]), (400, "请求体不能为空。"))
+        # same host passes whatever the scheme (TLS terminates in front of Cloud Run), as does no Origin
+        for origin in ("https://localhost", "http://localhost", "HTTPS://LOCALHOST"):
+            self.assertEqual(self.c.post("/api", json=self.SUMMARY, headers={"Origin": origin}).status_code, 200)
+        self.assertEqual(self.c.post("/api", json=self.SUMMARY).status_code, 200)
+
+    def test_missing_or_unknown_action_with_session_is_400(self):
+        login(self.c)
+        unknown = {"status": "error", "code": "unknown_action", "message": "未知操作。"}
+        for body in ({"date": "2026-10-14", "item": "x", "income": 5}, {"action": "drop_everything", "item": "x"},
+                     {"action": "", "item": "x"}, {"action": ["add_record"], "item": "x"}, {"action": "ADD_RECORD"}):
+            r = self.c.post("/api", json=body)
+            self.assertEqual(r.status_code, 400, body)
+            self.assertEqual(r.get_json(), unknown)
+        self.assert_no_writes()
+        # non-object JSON bodies are treated as empty instead of crashing
+        r = self.c.post("/api", json=["add_record"])
+        self.assertEqual((r.status_code, r.get_json()["message"]), (400, "请求体不能为空。"))
+
+    def test_add_record_author_comes_from_session_not_body(self):
+        login(self.c)
+        r = self.c.post("/api", json=dict(self.ADD, user="mallory"))
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["status"], "success")
+        self.assertEqual(self.db.add_transaction.call_args.kwargs["user"], TEST_USER)
+        self.assertEqual(self.db._memory_tx[-1]["user"], TEST_USER)
+
+
+class UserCredentialTests(unittest.TestCase):
+    """firestore_db: no fallback account, salted hashes, legacy SHA-256 upgrade, username validation."""
+
+    def client_db(self, doc_exists=True, stored_hash=None):
+        db = FirestoreLedgerDB("test-no-firestore")
+        db._client = MagicMock()
+        doc_ref = db._client.collection.return_value.document.return_value
+        doc = doc_ref.get.return_value
+        doc.exists = doc_exists
+        doc.to_dict.return_value = {"password_hash": stored_hash} if doc_exists else None
+        return db, doc_ref
+
+    def test_set_user_stores_salted_werkzeug_hash(self):
+        from werkzeug.security import check_password_hash
+        db = memory_db()
+        stored = db._memory_users[TEST_USER]["password_hash"]
+        self.assertNotIn(TEST_PASSWORD, stored)
+        self.assertNotEqual(stored, hashlib.sha256(TEST_PASSWORD.encode()).hexdigest())
+        self.assertTrue(stored.startswith("scrypt:") or stored.startswith("pbkdf2:"), stored)
+        self.assertTrue(check_password_hash(stored, TEST_PASSWORD))
+        self.assertIsNotNone(db._memory_users[TEST_USER]["updated_at"].tzinfo)
+        db2 = memory_db()
+        self.assertNotEqual(db2._memory_users[TEST_USER]["password_hash"], stored)   # salted
+        self.assertTrue(db.verify_user(TEST_USER, TEST_PASSWORD))
+        self.assertTrue(db.verify_user("  Treasurer ", TEST_PASSWORD))
+        self.assertFalse(db.verify_user(TEST_USER, TEST_PASSWORD.upper()))
+        self.assertFalse(db.verify_user(TEST_USER, ""))
+
+    def test_set_user_validation(self):
+        db = FirestoreLedgerDB("test-no-firestore")
+        for user, pw in [("ok", "short-pw"), ("a/b", TEST_PASSWORD), ("", TEST_PASSWORD), ("..", TEST_PASSWORD),
+                         ("x" * 65, TEST_PASSWORD), ("ok", " " + TEST_PASSWORD), ("ok", TEST_PASSWORD + "\n")]:
+            with self.assertRaises(ValueError, msg=(user, pw)) as ctx:
+                db.set_user(user, pw)
+            self.assertNotIn(pw.strip(), str(ctx.exception))
+        self.assertEqual(db._memory_users, {})
+        db.set_user("x" * 64, "a" * 12)    # boundaries are accepted
+        self.assertTrue(db.verify_user("x" * 64, "a" * 12))
+
+    def test_set_user_with_client_writes_document(self):
+        from google.cloud import firestore
+        from werkzeug.security import check_password_hash
+        db, doc_ref = self.client_db()
+        db.set_user("  Treasurer ", TEST_PASSWORD)
+        db._client.collection.assert_called_with("users")
+        db._client.collection.return_value.document.assert_called_with(TEST_USER)
+        (data,), kwargs = doc_ref.set.call_args
+        self.assertEqual(kwargs, {"merge": True})
+        self.assertEqual(set(data), {"password_hash", "updated_at"})
+        self.assertIs(data["updated_at"], firestore.SERVER_TIMESTAMP)
+        self.assertTrue(check_password_hash(data["password_hash"], TEST_PASSWORD))
+        self.assertEqual(db._memory_users, {})          # no silent in-memory copy
+        doc_ref.set.side_effect = RuntimeError("permission denied")
+        with self.assertRaises(RuntimeError):
+            db.set_user(TEST_USER, TEST_PASSWORD)
+
+    def test_no_hardcoded_fallback_account(self):
+        db = FirestoreLedgerDB("test-no-firestore")    # no client, no users
+        for pw in (OLD_ADMIN_PASSWORD, OLD_ADMIN_SHA256):
+            self.assertFalse(db.verify_user("admin", pw))
+        db, _ = self.client_db(doc_exists=False)
+        self.assertFalse(db.verify_user("admin", OLD_ADMIN_PASSWORD))
+        db, doc_ref = self.client_db()
+        doc_ref.get.side_effect = RuntimeError("deadline exceeded")
+        with self.assertLogs("ledger.firestore", level="ERROR") as logs:
+            self.assertFalse(db.verify_user("admin", OLD_ADMIN_PASSWORD))
+        self.assertFalse(any(OLD_ADMIN_PASSWORD in m for m in logs.output))
+        db, _ = self.client_db(stored_hash=None)        # doc without a hash
+        self.assertFalse(db.verify_user("admin", OLD_ADMIN_PASSWORD))
+        db, _ = self.client_db(stored_hash="bogus$method$x")   # malformed hash never raises
+        self.assertFalse(db.verify_user("admin", OLD_ADMIN_PASSWORD))
+
+    def test_memory_users_ignored_when_client_exists(self):
+        db = memory_db()
+        db._client = MagicMock()
+        db._client.collection.return_value.document.return_value.get.return_value.exists = False
+        self.assertFalse(db.verify_user(TEST_USER, TEST_PASSWORD))
+
+    def test_legacy_sha256_hash_verifies_and_is_upgraded(self):
+        from werkzeug.security import check_password_hash
+        legacy = hashlib.sha256(TEST_PASSWORD.encode()).hexdigest()
+        for stored in (legacy, legacy.upper()):
+            db, doc_ref = self.client_db(stored_hash=stored)
+            self.assertFalse(db.verify_user(TEST_USER, "wrong-password-123"))
+            doc_ref.set.assert_not_called()
+            self.assertTrue(db.verify_user(TEST_USER, TEST_PASSWORD))
+            (data,), kwargs = doc_ref.set.call_args
+            self.assertEqual(kwargs, {"merge": True})
+            self.assertTrue(check_password_hash(data["password_hash"], TEST_PASSWORD))
+            self.assertNotEqual(data["password_hash"], legacy)
+
+        # a failed upgrade is logged and does not fail the login
+        db, doc_ref = self.client_db(stored_hash=legacy)
+        doc_ref.set.side_effect = RuntimeError("write failed")
+        with self.assertLogs("ledger.firestore", level="WARNING") as logs:
+            self.assertTrue(db.verify_user(TEST_USER, TEST_PASSWORD))
+        self.assertTrue(any("Could not upgrade" in m for m in logs.output))
+        self.assertFalse(any(TEST_PASSWORD in m or legacy in m for m in logs.output))
+
+        # a Werkzeug hash is not rewritten on login
+        db, doc_ref = self.client_db(stored_hash=memory_db()._memory_users[TEST_USER]["password_hash"])
+        self.assertTrue(db.verify_user(TEST_USER, TEST_PASSWORD))
+        doc_ref.set.assert_not_called()
+
+        # in-memory store upgrades too
+        db = FirestoreLedgerDB("test-no-firestore")
+        db._memory_users["legacy"] = {"password_hash": legacy}
+        self.assertTrue(db.verify_user("legacy", TEST_PASSWORD))
+        self.assertTrue(db._memory_users["legacy"]["password_hash"].startswith(("scrypt:", "pbkdf2:")))
+        self.assertTrue(db.verify_user("legacy", TEST_PASSWORD))
+
+    def test_invalid_username_returns_false_without_firestore_access(self):
+        db, _ = self.client_db()
+        for name in ("a/b", "../admin", "users/admin", "", "   ", "x" * 65, "管理员", "ad min", ".", "..",
+                     "__admin__", "admin\n\x00", None, 123, ["admin"]):
+            self.assertFalse(db.verify_user(name, TEST_PASSWORD), repr(name))
+        db._client.collection.assert_not_called()
+
+
+class CreateUserScriptTests(unittest.TestCase):
+    """scripts/create_user.py: explicit --project, getpass only, refuses without a real client, no echo."""
+
+    PW = "script-Test-pw-42"
+
+    def setUp(self):
+        import importlib.util
+        path = os.path.join(HERE, "..", "scripts", "create_user.py")
+        spec = importlib.util.spec_from_file_location("create_user_under_test", path)
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)
+
+    def run_main(self, argv, answers=(), client=None):
+        import contextlib
+        import io
+        prompt = MagicMock(side_effect=list(answers))
+        created = []
+
+        def init_client(db):
+            db._client = client
+            created.append(db)
+
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(FirestoreLedgerDB, "_init_client", init_client), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                code = self.mod.main(argv, prompt=prompt)
+            except SystemExit as exc:
+                code = exc.code
+        return code, out.getvalue(), err.getvalue(), prompt, created
+
+    def test_refuses_without_real_firestore_client(self):
+        code, out, err, prompt, created = self.run_main(["--project", "some-project", "alice"],
+                                                        answers=[self.PW, self.PW], client=None)
+        self.assertEqual(code, 1)
+        self.assertIn("could not create a Cloud Firestore client", err)
+        self.assertNotIn("saved", out)
+        prompt.assert_not_called()                     # fails before asking for a password
+        self.assertEqual(created[0].project_id, "some-project")
+        self.assertEqual(created[0]._memory_users, {})
+
+    def test_saves_user_without_echoing_password_or_hash(self):
+        from werkzeug.security import check_password_hash
+        client = MagicMock()
+        code, out, err, prompt, created = self.run_main(["--project", "test-proj", "Alice"],
+                                                        answers=[self.PW, self.PW], client=client)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "user alice saved in project test-proj\n")
+        self.assertEqual(err, "")
+        self.assertEqual(prompt.call_count, 2)
+        self.assertEqual(created[0].project_id, "test-proj")
+        client.collection.return_value.document.assert_called_with("alice")
+        (data,), _ = client.collection.return_value.document.return_value.set.call_args
+        self.assertTrue(check_password_hash(data["password_hash"], self.PW))
+        for secret in (self.PW, data["password_hash"]):
+            self.assertNotIn(secret, out + err)
+            for c in prompt.call_args_list:
+                self.assertNotIn(secret, str(c))
+
+    def test_rejects_mismatch_short_password_and_write_errors(self):
+        cases = [([self.PW, self.PW + "x"], "do not match"), (["short", "short"], "at least 12")]
+        for answers, msg in cases:
+            client = MagicMock()
+            code, out, err, _, _ = self.run_main(["--project", "p", "alice"], answers=answers, client=client)
+            self.assertEqual(code, 1)
+            self.assertIn(msg, err)
+            self.assertEqual(out, "")
+            client.collection.return_value.document.return_value.set.assert_not_called()
+            for a in answers:
+                self.assertNotIn(a, err)
+        client = MagicMock()
+        client.collection.return_value.document.return_value.set.side_effect = RuntimeError("denied " + self.PW)
+        code, out, err, _, _ = self.run_main(["--project", "p", "alice"], answers=[self.PW, self.PW], client=client)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("RuntimeError", err)
+        self.assertNotIn(self.PW, err)
+
+    def test_project_required_and_password_never_an_argument(self):
+        for argv in (["alice"], ["--project", "p", "alice", self.PW], ["--project", "p", "--password", self.PW, "alice"]):
+            code, out, err, prompt, created = self.run_main(argv, client=MagicMock())
+            self.assertEqual(code, 2, argv)
+            self.assertEqual(created, [])
+            prompt.assert_not_called()
+        code, _, err, _, created = self.run_main(["--project", "p", "a/b"], client=MagicMock())
+        self.assertEqual(code, 2)
+        self.assertEqual(created, [])
 
 
 if __name__ == "__main__":

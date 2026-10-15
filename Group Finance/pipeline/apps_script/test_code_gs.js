@@ -320,4 +320,32 @@ test("add_record rejects empty item and zero amount", () => {
   assert.strictEqual(res.status, "error");
   assert.match(res.message, /事项或金额不能为空/);
 });
+// getPasswordHash(): no published password, empty placeholder throws, only the hash is ever logged.
+function checkPasswordHelper(file) {
+  const src = fs.readFileSync(path.join(__dirname, file), "utf8");
+  assert.ok(!src.includes("Abc1234#"), file + " still contains the published password");
+  assert.ok(!/Logger\.log\([^)]*\bpassword\b/.test(src), file + " logs a plaintext password");
+  const placeholder = 'const password = "";';
+  assert.strictEqual(src.split(placeholder).length, 2, file + ": getPasswordHash placeholder must be one empty string");
+  const runHelper = code => {
+    const logs = [];
+    const c = Object.assign({}, ctx, { Logger: { log: m => logs.push(String(m)) } });
+    vm.createContext(c);
+    vm.runInContext(code, c);
+    let error = null;
+    try { vm.runInContext("getPasswordHash()", c); } catch (e) { error = e; }
+    return { logs, error };
+  };
+  const empty = runHelper(src);
+  assert.ok(empty.error && /placeholder/.test(empty.error.message), file + ": empty placeholder must throw");
+  assert.deepStrictEqual(empty.logs, []);
+  const pw = "helper-Test-pw-9";
+  const filled = runHelper(src.replace(placeholder, `const password = "${pw}";`));
+  assert.strictEqual(filled.error, null);
+  const want = require("crypto").createHash("sha256").update(pw).digest("hex");
+  assert.ok(filled.logs.some(l => l.includes(want)), file + ": hash not logged");
+  assert.ok(filled.logs.every(l => !l.includes(pw)), file + ": plaintext password logged");
+}
+test("getPasswordHash (Code.gs): empty placeholder throws, logs only the hash", () => checkPasswordHelper("Code.gs"));
+test("getPasswordHash (Code.original.gs): no published password, logs only the hash", () => checkPasswordHelper("Code.original.gs"));
 console.log(`\n${passed} Apps Script tests passed`);
