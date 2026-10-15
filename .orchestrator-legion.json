@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 2,
+  "project": {
+    "name": "Group Finance",
+    "oneLiner": "Serverless ledger pipeline for Group Finance on Google Cloud Platform",
+    "stack": "Python 3.14, Flask, Google Cloud Run, Cloud Firestore, Cloud Storage, Cloud CDN, Google Apps Script, React 19, Tailwind CSS"
+  },
+  "commands": {
+    "dev": "PYTHONPATH=\"Group Finance/pipeline\" PORT=8000 \"Group Finance/pipeline/.venv/bin/python\" -m ledger_pipeline.service",
+    "test": "\"Group Finance/pipeline/.venv/bin/pytest\" \"Group Finance/pipeline/tests\"",
+    "testSingle": "",
+    "build": "",
+    "worktreeSetup": []
+  },
+  "branches": {
+    "staging": "staging",
+    "production": "main"
+  },
+  "paths": {
+    "buildOutput": []
+  },
+  "deploy": {
+    "target": "Google Cloud Run (asia-southeast1)"
+  },
+  "github": {
+    "enabled": true
+  },
+  "team": {
+    "hr": "hr-manager",
+    "subOrchestrator": "orchestrator"
+  },
+  "generated": {
+    ".github/ISSUE_TEMPLATE/taskboard.md": "sha256-013573ae6b07fbfcf336f5fb5026ec03d25d17fc0cc6583507f48b3361b7ce9f",
+    ".github/PULL_REQUEST_TEMPLATE.md": "sha256-5da1e9f899f5c78823a8dbf8f6dcf17632050c22c0aefb751531da62d9256d03"
+  }
+}

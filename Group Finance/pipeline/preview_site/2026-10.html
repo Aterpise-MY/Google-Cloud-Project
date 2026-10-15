@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小组每月奉献记录 2026-10</title>
+<style>@font-face { font-family: Carlito; font-weight: 400; font-style: normal; font-display: swap;
+  src: local("Carlito"), local("Carlito-Regular"),
+       url(https://fonts.gstatic.com/s/carlito/v4/3Jn9SDPw3m-pk039DDeBTFcHXuA.woff2) format("woff2"); }
+@font-face { font-family: Carlito; font-weight: 700; font-style: normal; font-display: swap;
+  src: local("Carlito Bold"), local("Carlito-Bold"),
+       url(https://fonts.gstatic.com/s/carlito/v4/3Jn4SDPw3m-pk039BIykWXolU8pB2Os.woff2) format("woff2"); }
+@page { size: 297mm 210mm; margin: 10mm 12mm; }
+* { box-sizing: border-box; }
+html { background: #eef1f5; scroll-behavior: smooth; }
+body { margin: 0; font-family: Calibri, Carlito, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
+       color: #000; font-size: 11pt; line-height: 1.4; }
+
+/* Sticky Top Navigation Bar */
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid #dcdfe6;
+  padding: 10px 20px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
+}
+.nav-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.nav-brand {
+  font-weight: 700;
+  font-size: 15px;
+  color: #1a202c;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.nav-brand span.badge {
+  font-size: 11px;
+  background: #e2e8f0;
+  color: #4a5568;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-weight: 600;
+}
+.nav-links {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.nav-links a, .nav-links button {
+  padding: 5px 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+  text-decoration: none;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1.2;
+}
+.nav-links a:hover, .nav-links button:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+.nav-links a.cur {
+  background: #0f172a;
+  color: #fff;
+  border-color: #0f172a;
+  font-weight: 600;
+}
+.btn-print {
+  background: #2563eb !important;
+  color: #fff !important;
+  border-color: #2563eb !important;
+  font-weight: 600;
+}
+.btn-print:hover {
+  background: #1d4ed8 !important;
+}
+.meta {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.sheet-wrap {
+  padding: 16px 16px 48px;
+}
+.sheet {
+  background: #fff;
+  margin: 32px auto;
+  position: relative;
+  color: #000;
+}
+.sheet h1 { margin: 0; font-family: Times, "Times New Roman", "Liberation Serif", "Songti SC", STSong, SimSun, "Noto Serif CJK SC", "Noto Serif SC", serif; font-weight: 700; text-align: left; white-space: nowrap; }
+.sheet .hdr { font-family: Times, "Times New Roman", "Liberation Serif", "Songti SC", STSong, SimSun, "Noto Serif CJK SC", "Noto Serif SC", serif; font-weight: 700; text-align: center; white-space: pre; }
+.sheet .hdr u { text-decoration: underline; text-decoration-skip-ink: none; }
+.sheet table { border-collapse: collapse; table-layout: fixed; margin: 0; }
+.sheet th, .sheet td { border-style: solid; border-color: #000; text-align: left; vertical-align: top;
+                       overflow-wrap: anywhere; }
+.sheet th { font-family: Times, "Times New Roman", "Liberation Serif", "Songti SC", STSong, SimSun, "Noto Serif CJK SC", "Noto Serif SC", serif; font-weight: 700; text-align: center; }
+.sheet td { font-family: Calibri, Carlito, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", sans-serif; font-weight: 400; }
+.sheet td.d { font-family: Arial, "Liberation Sans", Arimo, Helvetica, sans-serif; }
+.sheet thead { display: table-header-group; }
+.sheet tr { break-inside: avoid; }
+.sheet .foot { font-family: Calibri, Carlito, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", sans-serif; font-weight: 700; white-space: pre; }
+.sheet .foot .row { display: flex; }
+.sheet .foot .left-col { flex: none; }
+.sheet table:has(.col-act) { width: auto; }
+th.col-act {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+  width: 0 !important;
+}
+td.col-act {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 0 0 8px !important;
+  text-align: left !important;
+  vertical-align: middle !important;
+  white-space: nowrap !important;
+}
+.btn-del {
+  background: #fee2e2;
+  color: #dc2626;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+.btn-del:hover {
+  background: #ef4444;
+  color: #fff;
+  border-color: #ef4444;
+}
+@media print {
+  .col-act, .btn-del {
+    display: none !important;
+  }
+}
+.sheet { width: 709px; min-height: 477px; padding: 44.5px 55px 67.3px 52px;
+         border-radius: 18px; box-shadow: 0 0 19px rgba(0, 0, 0, 0.3); }
+.sheet h1 { font-size: 16px; line-height: 20px; padding-left: 208px; }
+.sheet .hdr { font-size: 13.333px; line-height: 17px; margin: 19.5px -17.7px 0 0; }
+.sheet .hdr u { text-decoration-thickness: 1px; text-underline-offset: 1px; }
+.sheet table { width: 602px; margin: 81.5px 0 0 -0.5px; }
+.sheet col:nth-child(1) { width: 49px; }
+.sheet col:nth-child(2) { width: 180px; }
+.sheet col:nth-child(3) { width: 77px; }
+.sheet col:nth-child(4) { width: 77px; }
+.sheet col:nth-child(5) { width: 78px; }
+.sheet col:nth-child(6) { width: 67px; }
+.sheet col:nth-child(7) { width: 74px; }
+.sheet th, .sheet td { border-width: 1px; }
+.sheet th { height: 36px; padding: 5px 0 0; font-size: 13.333px; line-height: 17px; }
+.sheet td { height: 26.5px; padding: 4.5px 6.7px 2.5px; font-size: 13.333px; line-height: 17.43px; }
+.sheet td.x { height: 28.3px; }
+.sheet td.d, .sheet td.i, .sheet td.n, .sheet td.b { height: 29px; }
+.sheet td.d { padding-top: 4px; }
+.sheet td.i, .sheet td.n { font-size: 14.667px; line-height: 19.17px; }
+.sheet .foot { margin-top: 32px; font-size: 13.333px; line-height: 17.56px; }
+.sheet .foot .left-col { width: 288px; }
+.sheet .foot .row-date { margin-top: 10.94px; }
+@media print {
+.sheet { width: 945.333px; min-height: 636px; padding: 59.333px 73.333px 89.733px 69.333px;
+         border-radius: 24px; box-shadow: 0 0 25.333px rgba(0, 0, 0, 0.3); }
+.sheet h1 { font-size: 21.333px; line-height: 26.667px; padding-left: 277.333px; }
+.sheet .hdr { font-size: 17.777px; line-height: 22.667px; margin: 26px -23.6px 0 0; }
+.sheet .hdr u { text-decoration-thickness: 1.333px; text-underline-offset: 1.333px; }
+.sheet table { width: 802.667px; margin: 108.667px 0 0 -0.667px; }
+.sheet col:nth-child(1) { width: 65.333px; }
+.sheet col:nth-child(2) { width: 240px; }
+.sheet col:nth-child(3) { width: 102.667px; }
+.sheet col:nth-child(4) { width: 102.667px; }
+.sheet col:nth-child(5) { width: 104px; }
+.sheet col:nth-child(6) { width: 89.333px; }
+.sheet col:nth-child(7) { width: 98.667px; }
+.sheet th, .sheet td { border-width: 1.333px; }
+.sheet th { height: 48px; padding: 6.667px 0 0; font-size: 17.777px; line-height: 22.667px; }
+.sheet td { height: 35.333px; padding: 6px 8.933px 3.333px; font-size: 17.777px; line-height: 23.24px; }
+.sheet td.x { height: 37.733px; }
+.sheet td.d, .sheet td.i, .sheet td.n, .sheet td.b { height: 38.667px; }
+.sheet td.d { padding-top: 5.333px; }
+.sheet td.i, .sheet td.n { font-size: 19.556px; line-height: 25.56px; }
+.sheet .foot { margin-top: 42.667px; font-size: 17.777px; line-height: 23.413px; }
+.sheet .foot .left-col { width: 384px; }
+.sheet .foot .row-date { margin-top: 14.587px; }
+html, body { background: none; }
+.nav { display: none !important; }
+.sheet-wrap { padding: 0; }
+.sheet {
+  margin: 0 auto;
+  min-height: 0;
+  padding-bottom: 0;
+  box-shadow: none;
+  border-radius: 0;
+  page-break-after: always;
+  break-after: page;
+}
+.col-act, .btn-del {
+  display: none !important;
+}
+}</style></head><body>
+<div class="nav"><div class="nav-inner">
+  <div class="nav-brand">小组每月奉献记录 <span class="badge">2026年10月</span></div>
+  <div class="nav-links">
+    <a href="/manage" style="background:#4f46e5;color:#fff;border-color:#4f46e5;font-weight:600;" title="前往财务登记系统">📝 登记账目</a>
+    <a href="https://docs.google.com/spreadsheets/d/1ruK6Vqx-giwPewYyxkTr95VKk4wg5IpkVplGan9sKhE/edit" target="_blank" rel="noopener noreferrer" style="background:#0f766e;color:#fff;border-color:#0f766e;font-weight:600;" title="在 Google Sheets 中打开原始资料库">📊 Google Sheets 资料库 ↗</a>
+    <a href="index.html" title="查看从上到下完整显示">全部月份</a>
+    <a href="2026-01.html">1月</a><a href="2026-02.html">2月</a><a href="2026-03.html">3月</a><a href="2026-04.html">4月</a><a href="2026-05.html">5月</a><a href="2026-06.html">6月</a><a href="2026-07.html">7月</a><a href="2026-08.html">8月</a><a href="2026-09.html">9月</a><a href="2026-10.html" class=cur>10月(当前)</a>
+    <button class="btn-print" onclick="window.print()">🖨️ 打印 / 导出 PDF</button>
+    <a href="/booklet/logout" style="background:#f8fafc;color:#64748b;border-color:#cbd5e1;font-size:12px;" title="退出册子登录">🚪 退出</a>
+  </div>
+  <span class="meta">更新于 2026-10-14 21:49 Asia/Singapore</span>
+</div></div>
+<div class="sheet-wrap">
+<div class="sheet">
+<h1>小组每月奉献记录</h1>
+<div class="hdr">小组编号：<u>__YA5___</u>            点算同工：<u>Rivaldo, Brendon</u>        月份：_10 /2026</div>
+<table><colgroup><col><col><col><col><col><col><col><col class="col-act"></colgroup><thead><tr><th>日期</th><th>事项</th><th>数目-收入</th><th>数目-支出</th><th>结存</th><th>签名</th><th>签名</th><th class="col-act"></th></tr></thead><tbody>
+<tr><td></td><td>Balance b/f</td><td>319</td><td></td><td>319</td><td></td><td></td><td class="col-act"></td></tr>
+<tr><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="col-act"></td></tr>
+<tr><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="col-act"></td></tr>
+<tr><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="col-act"></td></tr>
+</tbody></table>
+<div class="foot"><div class="row"><div class="left-col">Verify by: __________________________</div><div class="right-col">Name     :  __________________________</div></div><div class="row row-date"><div class="left-col">Date:  ________________________</div></div></div>
+</div>
+</div>
+<script>
+async function deleteEntry(year, month, dateStr, item, income, expense, btn) {
+  var amtStr = Number(income) > 0 ? ('收入: ' + income) : (Number(expense) > 0 ? ('支出: ' + expense) : '');
+  var msg = '确定要删除这条记录吗？\n\n' +
+            '• 日期: ' + dateStr + '\n' +
+            '• 事项: ' + item + '\n' +
+            (amtStr ? ('• 金额: ' + amtStr + '\n') : '') +
+            '\n删除后，本月及后续月份的账目结存将自动重新计算。';
+  if (!confirm(msg)) return;
+  btn.disabled = true;
+  btn.innerText = '删除中...';
+  try {
+    var res = await fetch('/api', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'delete_record',
+        year: parseInt(year, 10),
+        month: parseInt(month, 10),
+        date: dateStr,
+        item: item,
+        income: parseFloat(income) || 0,
+        expense: parseFloat(expense) || 0
+      })
+    });
+    var data = await res.json();
+    if (res.ok && data.status === 'success') {
+      alert('✅ 记录已成功删除！账目结存已自动重新计算。');
+      window.location.reload();
+    } else {
+      alert('❌ 删除失败: ' + (data.message || '未知错误'));
+      btn.disabled = false;
+      btn.innerText = '🗑️ 删除';
+    }
+  } catch (err) {
+    alert('❌ 请求失败: ' + err.message);
+    btn.disabled = false;
+    btn.innerText = '🗑️ 删除';
+  }
+}
+</script>
+</body></html>

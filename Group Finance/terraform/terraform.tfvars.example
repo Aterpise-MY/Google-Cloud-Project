@@ -1,0 +1,18 @@
+# Google Cloud Project Configuration
+project_id = "group-511516"
+region     = "asia-southeast1"
+
+# Web-app (/exec) URL from Google Apps Script (Deploy > Manage deployments)
+apps_script_url = "https://script.google.com/macros/s/AKfycbyTZAyshSlMEaITGfXx4yJBmSCr9_A00YHWjdwVMK5rECxG7iTLHqNuumoV-Nt5gb-kQg/exec"
+
+# Optional: Netlify JWS secret token for webhook verification
+# netlify_jws_secret = "your-netlify-jws-secret"
+
+# Optional: Custom domain for direct Cloud Run mapping or Cloudflare CNAME
+custom_domain = "ya5.finance.aterpise.com"
+
+# Set to true to provision a direct Cloud Run custom domain mapping via GCP
+enable_custom_domain_mapping = false
+
+# Container Image URL (if you built and pushed to Artifact Registry)
+# container_image = "asia-southeast1-docker.pkg.dev/group-511516/ledger/ledger-pipeline:latest"

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小组财务登记系统 - Ledger Pro</title>
+    <link rel="icon" href="data:,">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+        .form-input { transition: all 0.2s; }
+        input[type="date"] {
+            color: #000000 !important;
+            -webkit-text-fill-color: #000000 !important;
+        }
+        input[type="date"]::-webkit-datetime-edit { color: #000000; }
+    </style>
+
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0"
+  }
+}
+</script>
+  <script>
+    window.__API_URL__ = "/api";
+  </script>
+  <script type="module" crossorigin src="/assets/index-Chv3jFTT.js"></script>
+</head>
+<body class="bg-slate-50 min-h-screen">
+    <!-- Top banner: Booklet button hidden on login page, displayed when authenticated -->
+    <div class="max-w-md mx-auto pt-4 px-4 flex justify-between items-center text-xs">
+      <span class="font-bold text-slate-400 tracking-wider">GROUP FINANCE · YA5</span>
+      <a id="booklet-link" href="/booklet" style="display: none;" class="items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 text-indigo-600 font-bold rounded-full border border-slate-200 shadow-sm transition-all" title="查看小组每月奉献记录 (官方连排册子)">
+        📖 查看每月奉献册子 ↗
+      </a>
+    </div>
+
+    <!-- React will mount the entire application inside this div -->
+    <div id="root"></div>
+
+    <script>
+      (function() {
+        function syncBookletVisibility() {
+          const isAuth = !!localStorage.getItem("currentUser") || !!localStorage.getItem("sessionToken");
+          const btn = document.getElementById("booklet-link");
+          if (btn) {
+            btn.style.display = isAuth ? "inline-flex" : "none";
+          }
+        }
+        window.addEventListener("DOMContentLoaded", syncBookletVisibility);
+        window.addEventListener("storage", syncBookletVisibility);
+        const observer = new MutationObserver(syncBookletVisibility);
+        window.addEventListener("DOMContentLoaded", () => {
+          const root = document.getElementById("root");
+          if (root) observer.observe(root, { childList: true, subtree: true });
+        });
+      })();
+    </script>
+
+    <!-- Datalist for Item Suggestions -->
+    <datalist id="item-suggestions">
+        <option value="同工大会"></option>
+        <option value="布道会"></option>
+        <option value="小组"></option>
+        <option value="休息"></option>
+        <option value="Outing"></option>
+    </datalist>
+</body>
+</html>
