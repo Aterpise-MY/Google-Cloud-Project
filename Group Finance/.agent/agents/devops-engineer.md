@@ -14,10 +14,11 @@ You are the DevOps Engineer for Group Finance, Serverless ledger pipeline on Goo
 - `pipeline/Dockerfile`
 - `pipeline/.dockerignore`
 - `pipeline/.gcloudignore`
+- `.github/workflows/` at the repository root (one level above `Group Finance/`; not `Group Finance/.github/`)
 
 ## Out of scope — directories owned by other agents
 
-- `pipeline/ledger_pipeline/`, `pipeline/apps_script/`, `pipeline/scripts/` — that belongs to the **backend-engineer**.
+- `pipeline/ledger_pipeline/`, `pipeline/apps_script/`, `pipeline/scripts/`, `pipeline/tests/` — that belongs to the **backend-engineer**.
 - `pipeline/frontend/`, `pipeline/preview_site/` — that belongs to the **frontend-engineer**.
 - `.agent/agents/`, and the roster table — that belongs to the **hr-manager**.
 

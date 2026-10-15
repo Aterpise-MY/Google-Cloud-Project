@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
@@ -24,6 +24,9 @@ class Settings:
     cdn_url_map: str = ""               # optional: URL map name to invalidate after publish
     cdn_project: str = ""
     page_cache_seconds: int = 60
+    # /booklet login. No default password: empty (or whitespace-only) disables booklet login entirely.
+    booklet_user: str = "admin"
+    booklet_password: str = field(default="", repr=False)
 
     @classmethod
     def from_env(cls, env=os.environ) -> "Settings":
@@ -41,6 +44,8 @@ class Settings:
             cdn_url_map=g("CDN_URL_MAP", ""),
             cdn_project=g("GOOGLE_CLOUD_PROJECT", ""),
             page_cache_seconds=int(g("PAGE_CACHE_SECONDS", "60")),
+            booklet_user=g("BOOKLET_USER", "admin"),
+            booklet_password=g("BOOKLET_PASSWORD", ""),
         )
 
     def now(self) -> datetime:

@@ -10,10 +10,12 @@ Integrates:
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
 import os
 from decimal import Decimal
+from html import escape as html_escape
 from typing import Any, Dict, List, Optional
 
 from flask import Flask, Response, jsonify, redirect, request, send_from_directory
@@ -29,9 +31,21 @@ log = logging.getLogger("ledger")
 FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
 MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
-BOOKLET_USER = os.environ.get("BOOKLET_USER", "admin")
-BOOKLET_PASS = os.environ.get("BOOKLET_PASSWORD", "!Q@W3e4r")
-BOOKLET_TOKEN = hashlib.sha256(f"{BOOKLET_USER}:{BOOKLET_PASS}:booklet-salt-2026".encode()).hexdigest()
+# Booklet credentials come only from Settings (BOOKLET_USER / BOOKLET_PASSWORD env vars), read in
+# create_app(). There is no default password: unset/empty BOOKLET_PASSWORD disables booklet login.
+BOOKLET_COOKIE = "booklet_auth"
+BOOKLET_COOKIE_MAX_AGE = 2592000  # 30 days
+
+
+def booklet_token(user: str, password: str) -> str:
+    """Value of the booklet_auth cookie for a configured user/password."""
+    return hashlib.sha256(f"{user}:{password}:booklet-salt-2026".encode()).hexdigest()
+
+
+def _consteq(a: str, b: str) -> bool:
+    """Constant-time string comparison that also accepts non-ASCII input."""
+    return hmac.compare_digest(a.encode("utf-8", "surrogatepass"), b.encode("utf-8", "surrogatepass"))
+
 
 BOOKLET_LOGIN_HTML = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -145,6 +159,14 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
     holder = {"p": pipeline}
     db = FirestoreLedgerDB(settings.cdn_project)
 
+    booklet_user = settings.booklet_user
+    booklet_password = settings.booklet_password
+    booklet_enabled = bool(booklet_password.strip())
+    booklet_cookie_value = booklet_token(booklet_user, booklet_password) if booklet_enabled else None
+    if not booklet_enabled:
+        log.warning("BOOKLET_PASSWORD is not set: /booklet login is disabled "
+                    "(form login returns 503; basic auth and booklet_auth cookies are rejected)")
+
     def get_pipeline() -> Pipeline:
         if holder["p"] is None:
             holder["p"] = build_pipeline(settings)
@@ -192,11 +214,16 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
     # Booklet View (小组每月奉献记录 - 受账号密码保护)
     # -------------------------------------------------------------------------
     def is_booklet_auth(req) -> bool:
-        if req.cookies.get("booklet_auth") == BOOKLET_TOKEN:
-            return True
-        auth = req.authorization
-        if auth and auth.username == BOOKLET_USER and auth.password == BOOKLET_PASS:
-            return True
+        if booklet_enabled:  # fail closed: no booklet credential or cookie is valid when unconfigured
+            cookie = req.cookies.get(BOOKLET_COOKIE)
+            if cookie and _consteq(cookie, booklet_cookie_value):
+                return True
+            auth = req.authorization
+            if auth and auth.username is not None and auth.password is not None:
+                user_ok = _consteq(auth.username, booklet_user)
+                pass_ok = _consteq(auth.password, booklet_password)
+                if user_ok and pass_ok:
+                    return True
         if verify_token(req.headers, settings.pipeline_token):
             return True
         return False
@@ -208,13 +235,19 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
         if request.method == "POST":
             username = str(request.form.get("username", "")).strip()
             password = str(request.form.get("password", "")).strip()
-            if username.lower() == BOOKLET_USER.lower() and password == BOOKLET_PASS:
+            if not booklet_enabled:
+                off_html = '<div class="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-700 text-xs text-center font-medium">访问验证尚未配置，请联系管理员。(Booklet login is not configured.)</div>'
+                return BOOKLET_LOGIN_HTML.replace("{error_banner}", off_html).replace("{username}", html_escape(username)), 503
+            user_ok = _consteq(username.lower(), booklet_user.lower())
+            pass_ok = _consteq(password, booklet_password)
+            if user_ok and pass_ok:
                 resp = redirect("/booklet")
-                resp.set_cookie("booklet_auth", BOOKLET_TOKEN, max_age=2592000, httponly=True, samesite="Lax")
+                resp.set_cookie(BOOKLET_COOKIE, booklet_cookie_value, max_age=BOOKLET_COOKIE_MAX_AGE,
+                                httponly=True, samesite="Lax")
                 return resp
-            
+
             error_html = '<div class="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-xs text-center font-medium">用户名或密码错误，请重试。</div>'
-            return BOOKLET_LOGIN_HTML.replace("{error_banner}", error_html).replace("{username}", username), 401
+            return BOOKLET_LOGIN_HTML.replace("{error_banner}", error_html).replace("{username}", html_escape(username)), 401
 
         # Check authentication on GET
         if not is_booklet_auth(request):
@@ -256,7 +289,7 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
     @app.get("/booklet/logout")
     def booklet_logout():
         resp = redirect("/booklet")
-        resp.delete_cookie("booklet_auth")
+        resp.delete_cookie(BOOKLET_COOKIE)
         return resp
 
     @app.get("/booklet/<path:filename>")
