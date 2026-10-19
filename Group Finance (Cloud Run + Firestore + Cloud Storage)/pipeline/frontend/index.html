@@ -32,17 +32,13 @@
     window.__API_URL__ = "/api";
   </script>
   <script type="module" crossorigin src="/assets/index-Chv3jFTT.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body class="bg-slate-50 min-h-screen">
-    <!-- Top banner: Booklet button hidden on login page, displayed when authenticated -->
-    <div class="max-w-md mx-auto pt-4 px-4 flex justify-between items-center text-xs">
-      <span class="font-bold text-slate-400 tracking-wider">GROUP FINANCE · YA5</span>
-      <a id="booklet-link" href="/booklet" style="display: none;" class="items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 text-indigo-600 font-bold rounded-full border border-slate-200 shadow-sm transition-all" title="查看小组每月奉献记录 (官方连排册子)">
-        📖 查看每月奉献册子 ↗
-      </a>
-    </div>
+    <!-- Standalone anchor preserved for backward compatibility (React AppHeader renders prominent booklet link) -->
+    <a id="booklet-link" href="/booklet" style="display: none;" class="hidden"></a>
 
-    <!-- React will mount the entire application inside this div -->
+    <!-- React mounts the entire application inside this div -->
     <div id="root"></div>
 
     <script>
@@ -56,11 +52,6 @@
         }
         window.addEventListener("DOMContentLoaded", syncBookletVisibility);
         window.addEventListener("storage", syncBookletVisibility);
-        const observer = new MutationObserver(syncBookletVisibility);
-        window.addEventListener("DOMContentLoaded", () => {
-          const root = document.getElementById("root");
-          if (root) observer.observe(root, { childList: true, subtree: true });
-        });
       })();
     </script>
 
@@ -71,6 +62,10 @@
         <option value="小组"></option>
         <option value="休息"></option>
         <option value="Outing"></option>
+        <option value="爱宴"></option>
+        <option value="主日学"></option>
+        <option value="奉献"></option>
+        <option value="杂支"></option>
     </datalist>
 </body>
 </html>

@@ -1,0 +1,97 @@
+name: Group Finance Terraform CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/terraform/**'
+      - '.github/workflows/group-finance-terraform.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/terraform/**'
+      - 'terraform/**'
+      - '.github/workflows/group-finance-terraform.yml'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Terraform action to execute'
+        required: true
+        type: choice
+        default: 'plan'
+        options:
+          - plan
+          - apply
+          - destroy
+      confirm_destroy_project_id:
+        description: 'Target GCP Project ID confirmation (REQUIRED and must equal group-511516 if action is destroy)'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-group-finance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    name: Terraform (${{ github.event_name == 'workflow_dispatch' && github.event.inputs.action || (github.event_name == 'push' && 'apply' || 'plan') }})
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 'Group Finance (Cloud Run + Firestore + Cloud Storage)/terraform'
+
+    steps:
+      - name: Safety Guard - Validate Destroy Confirmation
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy' }}
+        run: |
+          echo "Checking destroy confirmation parameters..."
+          CONFIRM_ID="${{ github.event.inputs.confirm_destroy_project_id }}"
+          if [ "${CONFIRM_ID}" != "group-511516" ]; then
+            echo "::error::Terraform destroy aborted! confirm_destroy_project_id '${CONFIRM_ID}' does not match required 'group-511516'."
+            exit 1
+          fi
+          echo "Destroy confirmation passed for project group-511516."
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        uses: google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER || 'projects/997395841168/locations/global/workloadIdentityPools/github/providers/github-oidc' }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT || 'gh-deployer@group-511516.iam.gserviceaccount.com' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+
+      - name: Terraform Format Check
+        run: terraform fmt -check
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate -no-color
+
+      - name: Terraform Plan
+        if: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan') }}
+        run: terraform plan -no-color
+
+      - name: Terraform Apply (Push or Manual Apply)
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply') }}
+        run: |
+          terraform plan -no-color -out=tfplan
+          terraform apply -no-color -auto-approve tfplan
+
+      - name: Terraform Destroy
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy' }}
+        run: terraform destroy -no-color -auto-approve

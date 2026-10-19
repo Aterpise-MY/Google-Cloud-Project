@@ -20,7 +20,7 @@ resource "google_iam_workload_identity_pool_provider" "github_oidc" {
   workload_identity_pool_id          = google_iam_workload_identity_pool.github.workload_identity_pool_id
   workload_identity_pool_provider_id = "github-oidc"
   display_name                       = "GitHub OIDC"
-  description                        = "${var.github_repository} (id ${var.github_repository_id}) on refs/heads/${var.github_deploy_branch}"
+  description                        = "${var.github_repository} (id ${var.github_repository_id}) on refs/heads/${var.github_deploy_branch} and pull requests"
 
   attribute_mapping = {
     "google.subject"          = "assertion.sub"
@@ -29,9 +29,9 @@ resource "google_iam_workload_identity_pool_provider" "github_oidc" {
     "attribute.ref"           = "assertion.ref"
   }
 
-  # Evaluated at token exchange. Tokens from any other repository, from pull requests
-  # (refs/pull/*) or from any other branch are rejected before IAM is even consulted.
-  attribute_condition = "assertion.repository_id == '${var.github_repository_id}' && assertion.ref == 'refs/heads/${var.github_deploy_branch}'"
+  # Evaluated at token exchange. Tokens from any other repository are rejected.
+  # Allows workflows on the deploy branch and pull requests within the repository.
+  attribute_condition = "assertion.repository_id == '${var.github_repository_id}' && (assertion.ref == 'refs/heads/${var.github_deploy_branch}' || assertion.ref.startsWith('refs/pull/'))"
 
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
@@ -82,3 +82,35 @@ resource "google_service_account_iam_member" "gh_deployer_act_as_runtime" {
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.gh_deployer.email}"
 }
+
+# 11. GitHub Actions Terraform runner permissions
+# Remote state bucket object admin: allows gh-deployer to manage Terraform state files in GCS
+resource "google_storage_bucket_iam_member" "gh_deployer_tfstate_admin" {
+  bucket = "group-511516-tfstate"
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.gh_deployer.email}"
+}
+
+# Project-level roles required for Terraform to manage infrastructure resources
+locals {
+  gh_deployer_terraform_roles = [
+    "roles/serviceusage.serviceUsageAdmin",
+    "roles/storage.admin",
+    "roles/datastore.owner",
+    "roles/iam.serviceAccountAdmin",
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/secretmanager.admin",
+    "roles/artifactregistry.admin",
+    "roles/run.admin",
+    "roles/cloudscheduler.admin",
+    "roles/iam.workloadIdentityPoolAdmin",
+  ]
+}
+
+resource "google_project_iam_member" "gh_deployer_terraform_roles" {
+  for_each = toset(local.gh_deployer_terraform_roles)
+  project  = var.project_id
+  role     = each.key
+  member   = "serviceAccount:${google_service_account.gh_deployer.email}"
+}
+
