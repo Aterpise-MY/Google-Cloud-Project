@@ -14,6 +14,7 @@ import hmac
 import json
 import logging
 import os
+from datetime import date, datetime
 from decimal import Decimal
 from html import escape as html_escape
 from typing import Any, Dict, List, Optional
@@ -551,7 +552,6 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
             xlsx_path = get_xlsx_path(p)
             if xlsx_path and os.path.exists(xlsx_path):
                 try:
-                    from datetime import date, datetime
                     import openpyxl
                     wb = openpyxl.load_workbook(xlsx_path)
                     s_name = f"{MONTH_ABBR[month - 1]} {year}" if 1 <= month <= 12 else None
@@ -657,7 +657,6 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         if xlsx_path and os.path.exists(xlsx_path):
             try:
                 import calendar
-                from datetime import datetime
                 import openpyxl
                 wb = openpyxl.load_workbook(xlsx_path)
                 parts = date_str.split("-")
