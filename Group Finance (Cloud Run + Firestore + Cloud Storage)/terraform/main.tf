@@ -14,6 +14,9 @@ locals {
     "storage.googleapis.com",
     "compute.googleapis.com",
     "firestore.googleapis.com",
+    # Core GCP management APIs
+    "cloudresourcemanager.googleapis.com",
+    "serviceusage.googleapis.com",
     # GitHub Actions keyless auth (Workload Identity Federation): pools/providers, token exchange,
     # and service-account impersonation.
     "iam.googleapis.com",
