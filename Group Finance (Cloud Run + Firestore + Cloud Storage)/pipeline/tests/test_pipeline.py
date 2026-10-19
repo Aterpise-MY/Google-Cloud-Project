@@ -612,7 +612,10 @@ class BookletAuthTests(unittest.TestCase):
     def setUp(self):
         from unittest.mock import MagicMock, patch
         # booklet auth never touches Firestore; stub it so no GCP client (or metadata probe) is created
-        patcher = patch("ledger_pipeline.service.FirestoreLedgerDB", MagicMock())
+        mock_db = MagicMock()
+        mock_db.verify_user.return_value = False
+        mock_db.is_admin_user.return_value = False
+        patcher = patch("ledger_pipeline.service.FirestoreLedgerDB", return_value=mock_db)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.tmp = tempfile.TemporaryDirectory()
@@ -768,19 +771,62 @@ class FirestoreAndAdminTests(unittest.TestCase):
         self.db = FirestoreLedgerDB()
 
     def test_admin_user_verification(self):
-        self.assertFalse(self.db.is_admin_user("admin@groupfinance.com"))
-        user = self.db.add_admin_user("admin@groupfinance.com", name="Lead Admin")
+        # Default active admins
+        self.assertTrue(self.db.is_admin_user("admin@group.finance.com"))
+        self.assertTrue(self.db.is_admin_user("admin@groupfinance.com"))
+        self.assertTrue(self.db.is_admin_user("brendon.ang20011007@gmail.com"))
+        # Case insensitive & whitespace trimmed
+        self.assertTrue(self.db.is_admin_user(" ADMIN@GROUP.FINANCE.COM "))
+        self.assertTrue(self.db.is_admin_user(" ADMIN@GROUPFINANCE.COM "))
+
+        # Non-admin user returns False
+        self.assertFalse(self.db.is_admin_user("unknown@groupfinance.com"))
+        # Add new admin user
+        user = self.db.add_admin_user("newadmin@groupfinance.com", name="Lead Admin")
         self.assertEqual(user["role"], "admin")
         self.assertEqual(user["status"], "active")
-        self.assertTrue(self.db.is_admin_user("admin@groupfinance.com"))
-        # Case insensitive & whitespace trimmed
-        self.assertTrue(self.db.is_admin_user(" ADMIN@GROUPFINANCE.COM "))
+        self.assertTrue(self.db.is_admin_user("newadmin@groupfinance.com"))
         # Inactive user
         inactive = self.db.add_admin_user("inactive@groupfinance.com")
         inactive["status"] = "inactive"
         self.assertFalse(self.db.is_admin_user("inactive@groupfinance.com"))
         # Empty email
         self.assertFalse(self.db.is_admin_user(""))
+
+    def test_admin_group_finance_booklet_and_verification(self):
+        # 1. Assert db.is_admin_user("admin@group.finance.com") is True
+        self.assertTrue(self.db.is_admin_user("admin@group.finance.com"))
+        self.assertTrue(self.db.verify_user("admin@group.finance.com", "Abc1234#"))
+
+        # 2. Assert booklet login succeeds with admin@group.finance.com
+        from ledger_pipeline.service import create_app
+        from ledger_pipeline.sources import FirestoreSource
+        with tempfile.TemporaryDirectory() as td:
+            s = Settings(pipeline_token="test-secret", booklet_password="configured-pw")
+            source = FirestoreSource(self.db, opening_balance=693)
+            storage = LocalStorage(td)
+            p = Pipeline(s, source, storage, pdf=lambda h: h.encode("utf-8"), invalidate=lambda: None)
+            app = create_app(s, pipeline=p, db=self.db)
+            c = app.test_client()
+
+            # Booklet login with booklet_password
+            r_post1 = c.post("/booklet", data={"username": "admin@group.finance.com", "password": "configured-pw"})
+            self.assertEqual(r_post1.status_code, 302)
+            set_cookies1 = r_post1.headers.getlist("Set-Cookie")
+            self.assertTrue(any("booklet_auth=" in sc for sc in set_cookies1))
+            self.assertTrue(any("admin_auth=" in sc for sc in set_cookies1))
+
+            # Subsequent GET succeeds without re-login
+            r_get = c.get("/booklet")
+            self.assertNotIn("请输入授权账号与密码", r_get.get_data(as_text=True))
+
+            # Booklet login with default admin password (Abc1234#)
+            c.delete_cookie("booklet_auth")
+            c.delete_cookie("admin_auth")
+            r_post2 = c.post("/booklet", data={"username": "admin@group.finance.com", "password": "Abc1234#"})
+            self.assertEqual(r_post2.status_code, 302)
+            set_cookies2 = r_post2.headers.getlist("Set-Cookie")
+            self.assertTrue(any("admin_auth=" in sc for sc in set_cookies2))
 
     def test_firestore_crud_transactions(self):
         t1 = self.db.add_transaction(date_str="2026-08-13", item="奉献", income=100.0, expense=0.0, balance=598.0)

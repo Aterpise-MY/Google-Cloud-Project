@@ -23,13 +23,38 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
+DEFAULT_ADMIN_USERS: Dict[str, Dict[str, Any]] = {
+    "admin@group.finance.com": {
+        "email": "admin@group.finance.com",
+        "name": "Admin",
+        "role": "admin",
+        "status": "active",
+        "password_hash": hash_password("Abc1234#"),
+    },
+    "admin@groupfinance.com": {
+        "email": "admin@groupfinance.com",
+        "name": "Admin",
+        "role": "admin",
+        "status": "active",
+        "password_hash": hash_password("Abc1234#"),
+    },
+    "brendon.ang20011007@gmail.com": {
+        "email": "brendon.ang20011007@gmail.com",
+        "name": "Brendon Ang",
+        "role": "admin",
+        "status": "active",
+        "password_hash": hash_password("Abc1234#"),
+    },
+}
+
+
 class FirestoreLedgerDB:
     def __init__(self, project_id: Optional[str] = None):
         self.project_id = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", "group-511516")
         self._client = None
         self._memory_tx: List[Dict[str, Any]] = []
         self._memory_closings: Dict[str, Dict[str, Any]] = {}
-        self._memory_users: Dict[str, Dict[str, Any]] = {}
+        self._memory_users: Dict[str, Dict[str, Any]] = {k: dict(v) for k, v in DEFAULT_ADMIN_USERS.items()}
         self._init_client()
 
     def _init_client(self):
@@ -274,19 +299,37 @@ class FirestoreLedgerDB:
 
     def verify_user(self, username: str, password: str) -> bool:
         """Verifies username and password hash."""
+        if not username or not password:
+            return False
+        clean_user = username.lower().strip()
         target_hash = hash_password(password)
         if self._client:
             try:
-                doc = self._client.collection("users").document(username.lower()).get()
+                doc = self._client.collection("users").document(clean_user).get()
                 if doc.exists:
                     stored_hash = doc.to_dict().get("password_hash")
-                    return stored_hash == target_hash
+                    if stored_hash and stored_hash == target_hash:
+                        return True
             except Exception as exc:
                 log.warning("Firestore user lookup failed: %s", exc)
 
-        # Default fallback credentials (admin / Abc1234#)
-        if username.lower() == "admin":
-            if password == "Abc1234#" or target_hash == "778f21dfa476222f26f95f47da9b080c1c991d121a659598e9a643487f9f5110":
+        # In-memory user verification
+        mem_user = self._memory_users.get(clean_user)
+        if mem_user and mem_user.get("status") == "active":
+            mem_hash = mem_user.get("password_hash")
+            if mem_hash and mem_hash == target_hash:
+                return True
+
+        # Default fallback credentials (admin / admin@group.finance.com / admin@groupfinance.com)
+        # with default admin password (Abc1234#) or booklet password
+        booklet_pwd = os.environ.get("BOOKLET_PASSWORD", "").strip()
+        is_default_pass = (
+            password == "Abc1234#"
+            or target_hash == "778f21dfa476222f26f95f47da9b080c1c991d121a659598e9a643487f9f5110"
+            or (bool(booklet_pwd) and password == booklet_pwd)
+        )
+        if clean_user in ("admin", "admin@group.finance.com", "admin@groupfinance.com"):
+            if is_default_pass:
                 return True
         return False
 
@@ -315,9 +358,15 @@ class FirestoreLedgerDB:
         for u in self._memory_users.values():
             if str(u.get("email", "")).lower().strip() == clean_email:
                 return u.get("role") == "admin" and u.get("status") == "active"
+
+        # Default fallback admin list
+        if clean_email in DEFAULT_ADMIN_USERS:
+            fallback = DEFAULT_ADMIN_USERS[clean_email]
+            return fallback.get("role") == "admin" and fallback.get("status") == "active"
         return False
 
-    def add_admin_user(self, email: str, name: str = "", role: str = "admin") -> Dict[str, Any]:
+    def add_admin_user(self, email: str, name: str = "", role: str = "admin",
+                       password: Optional[str] = None) -> Dict[str, Any]:
         """Seeds or manages admin user document in collection 'users'."""
         clean_email = email.lower().strip()
         tz = ZoneInfo("Asia/Kuala_Lumpur")
@@ -327,6 +376,7 @@ class FirestoreLedgerDB:
             "name": name or clean_email.split("@")[0],
             "role": role,
             "status": "active",
+            "password_hash": hash_password(password) if password else hash_password("Abc1234#"),
             "created_at": now.isoformat(),
         }
         if self._client:

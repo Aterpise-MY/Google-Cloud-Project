@@ -79,7 +79,7 @@ BOOKLET_LOGIN_HTML = """<!DOCTYPE html>
       <div>
         <label class="block text-xs font-semibold text-slate-600 mb-1">账号 (Username)</label>
         <input type="text" name="username" value="{username}" required autofocus
-               placeholder="admin"
+               placeholder="admin@group.finance.com"
                class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
       </div>
 
@@ -253,9 +253,9 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
                 return True
             auth = req.authorization
             if auth and auth.username is not None and auth.password is not None:
-                user_ok = _consteq(auth.username, booklet_user)
+                user_ok = _consteq(auth.username, booklet_user) or db.is_admin_user(auth.username)
                 pass_ok = _consteq(auth.password, booklet_password)
-                if user_ok and pass_ok:
+                if (user_ok and pass_ok) or db.verify_user(auth.username, auth.password):
                     return True
         if verify_token(req.headers, settings.pipeline_token):
             return True
@@ -268,23 +268,30 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         if request.method == "POST":
             username = str(request.form.get("username", "")).strip()
             password = str(request.form.get("password", "")).strip()
+            pass_ok = booklet_enabled and _consteq(password, booklet_password)
+            user_ok = _consteq(username.lower(), booklet_user.lower()) or db.is_admin_user(username)
+
+            if (user_ok and pass_ok) or db.verify_user(username, password):
+                resp = redirect("/booklet")
+                cookie_val = booklet_cookie_value or booklet_token(username or booklet_user, password or "admin")
+                resp.set_cookie(BOOKLET_COOKIE, cookie_val, max_age=BOOKLET_COOKIE_MAX_AGE,
+                                httponly=True, samesite="Lax")
+                admin_token = f"session-{hashlib.sha256(f'{username}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
+                active_admin_tokens.add(admin_token)
+                resp.set_cookie(ADMIN_AUTH_COOKIE, admin_token, max_age=BOOKLET_COOKIE_MAX_AGE,
+                                httponly=True, samesite="Lax")
+                return resp
+
             if not booklet_enabled:
                 off_html = '<div class="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-700 text-xs text-center font-medium">访问验证尚未配置，请联系管理员。(Booklet login is not configured.)</div>'
                 return BOOKLET_LOGIN_HTML.replace("{error_banner}", off_html).replace("{username}", html_escape(username)), 503
-            user_ok = _consteq(username.lower(), booklet_user.lower())
-            pass_ok = _consteq(password, booklet_password)
-            if user_ok and pass_ok:
-                resp = redirect("/booklet")
-                resp.set_cookie(BOOKLET_COOKIE, booklet_cookie_value, max_age=BOOKLET_COOKIE_MAX_AGE,
-                                httponly=True, samesite="Lax")
-                return resp
 
             error_html = '<div class="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-xs text-center font-medium">用户名或密码错误，请重试。</div>'
             return BOOKLET_LOGIN_HTML.replace("{error_banner}", error_html).replace("{username}", html_escape(username)), 401
 
         # Check authentication on GET
         if not is_booklet_auth(request):
-            return BOOKLET_LOGIN_HTML.replace("{error_banner}", "").replace("{username}", "admin")
+            return BOOKLET_LOGIN_HTML.replace("{error_banner}", "").replace("{username}", "admin@group.finance.com")
 
         p = get_pipeline()
         preview_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "preview_site"))
@@ -380,7 +387,7 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
 
             email = ""
             if credential == "test-admin-token" or credential.startswith("test-"):
-                email = str(data.get("email") or "admin@groupfinance.com").strip().lower()
+                email = str(data.get("email") or "admin@group.finance.com").strip().lower()
             else:
                 try:
                     from google.oauth2 import id_token
@@ -391,7 +398,7 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
                 except Exception as exc:
                     log.warning("Google ID token verification failed: %s", exc)
                     if credential == "test-admin-token":
-                        email = str(data.get("email") or "admin@groupfinance.com").strip().lower()
+                        email = str(data.get("email") or "admin@group.finance.com").strip().lower()
                     else:
                         return jsonify(status="error", message=f"Invalid credential token: {exc}"), 401
 

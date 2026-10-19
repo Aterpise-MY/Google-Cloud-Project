@@ -412,7 +412,7 @@ function ToastBanner({ toast, onClose }) {
 // Google Sign-In & Login View (Requirement 1)
 // ============================================================================
 function LoginView({ onLoginSuccess, isLoading, error, setError }) {
-  const [quickEmail, setQuickEmail] = useState("admin@groupfinance.com");
+  const [quickEmail, setQuickEmail] = useState("admin@group.finance.com");
   const [showLegacy, setShowLegacy] = useState(false);
   const [legacyUser, setLegacyUser] = useState("");
   const [legacyPass, setLegacyPass] = useState("");
@@ -430,7 +430,7 @@ function LoginView({ onLoginSuccess, isLoading, error, setError }) {
         email: email || undefined
       });
       if (ok && data.status === "success") {
-        onLoginSuccess(data.token, data.user || { email: email || "admin@groupfinance.com", role: "admin" });
+        onLoginSuccess(data.token, data.user || { email: email || "admin@group.finance.com", role: "admin" });
       } else {
         const msg = data.message || `登录失败 (${status})`;
         setError(msg);
@@ -558,11 +558,11 @@ function LoginView({ onLoginSuccess, isLoading, error, setError }) {
         h("button", {
           type: "button",
           disabled: localLoading || isLoading,
-          onClick: () => executeLogin("test-admin-token", "admin@groupfinance.com"),
+          onClick: () => executeLogin("test-admin-token", "admin@group.finance.com"),
           className: "w-full py-3 px-4 bg-gradient-to-r from-slate-900 to-indigo-950 hover:from-slate-800 hover:to-indigo-900 text-white rounded-xl text-xs font-bold shadow-md shadow-slate-900/10 flex items-center justify-center gap-2 transition-all active:scale-98 disabled:opacity-60"
         },
           (localLoading || isLoading) ? h(Qn, { size: 16, className: "animate-spin" }) : h(GoogleIcon, { size: 16 }),
-          h("span", null, "⚡ 测试管理员一键登录 (admin@groupfinance.com)")
+          h("span", null, "⚡ 管理员一键登录 (admin@group.finance.com)")
         ),
 
         // Custom admin email input
@@ -575,7 +575,7 @@ function LoginView({ onLoginSuccess, isLoading, error, setError }) {
               type: "email",
               value: quickEmail,
               onChange: (e) => setQuickEmail(e.target.value),
-              placeholder: "admin@groupfinance.com",
+              placeholder: "admin@group.finance.com",
               className: "flex-1 px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-mono"
             }),
             h("button", {
