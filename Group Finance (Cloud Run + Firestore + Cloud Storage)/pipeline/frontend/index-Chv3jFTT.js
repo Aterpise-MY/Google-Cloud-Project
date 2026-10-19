@@ -1672,8 +1672,29 @@ function GroupFinanceApp() {
 // ============================================================================
 // Mount Root
 // ============================================================================
-const rootEl = document.getElementById("root");
-if (rootEl) {
-  const root = hy.createRoot(rootEl);
-  root.render(h(fy.StrictMode, null, h(GroupFinanceApp)));
+function mountGroupFinanceApp() {
+  const rootEl = document.getElementById("root");
+  if (!rootEl) {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", mountGroupFinanceApp);
+    } else {
+      setTimeout(mountGroupFinanceApp, 50);
+    }
+    return;
+  }
+  if (!rootEl._reactRootMounted) {
+    rootEl._reactRootMounted = true;
+    try {
+      const root = hy.createRoot(rootEl);
+      root.render(h(fy.StrictMode, null, h(GroupFinanceApp)));
+    } catch (err) {
+      console.error("Failed to mount GroupFinanceApp:", err);
+    }
+  }
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", mountGroupFinanceApp);
+} else {
+  mountGroupFinanceApp();
 }

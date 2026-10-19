@@ -207,6 +207,22 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
     def favicon():
         return Response("", status=204, mimetype="image/x-icon")
 
+    @app.after_request
+    def add_cors_headers(response):
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, X-Pipeline-Token"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        return response
+
+    @app.route("/<path:path>", methods=["OPTIONS"])
+    @app.route("/", methods=["OPTIONS"])
+    def options_handler(path=""):
+        resp = Response("", status=204)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, X-Pipeline-Token"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        return resp
+
     # -------------------------------------------------------------------------
     # Frontend Routes (Manage Group Finance)
     # -------------------------------------------------------------------------
@@ -224,11 +240,15 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
             return send_from_directory(FRONTEND_DIR, "index.html")
         return jsonify(status="error", message="frontend not found"), 404
 
-    @app.get("/assets/<path:filename>")
+    @app.route("/assets/<path:filename>", methods=["GET", "OPTIONS"])
     def assets_proxy(filename):
         """Serves frontend JS/CSS assets."""
+        if request.method == "OPTIONS":
+            return Response("", status=204)
         if os.path.exists(os.path.join(FRONTEND_DIR, filename)):
-            return send_from_directory(FRONTEND_DIR, filename)
+            resp = send_from_directory(FRONTEND_DIR, filename)
+            resp.headers["Access-Control-Allow-Origin"] = "*"
+            return resp
         return jsonify(status="error", message="asset not found"), 404
 
     # -------------------------------------------------------------------------
@@ -761,7 +781,11 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
 
     @app.get("/<path:path>")
     def static_proxy(path):
-        """Serves generated booklet HTML files (e.g. 2026-08.html, data/...)."""
+        """Serves generated booklet HTML files or frontend assets."""
+        if os.path.exists(os.path.join(FRONTEND_DIR, path)):
+            resp = send_from_directory(FRONTEND_DIR, path)
+            resp.headers["Access-Control-Allow-Origin"] = "*"
+            return resp
         p = get_pipeline()
         site_dir = getattr(p.storage, "root", None) or os.environ.get("SITE_DIR")
         if site_dir and os.path.exists(os.path.join(site_dir, path)):
