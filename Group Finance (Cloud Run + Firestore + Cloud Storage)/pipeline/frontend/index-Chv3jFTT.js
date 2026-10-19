@@ -146,11 +146,1534 @@ Error generating stack: `+a.message+`
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const wy=[["path",{d:"M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1",key:"18etb6"}],["path",{d:"M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4",key:"xoc0q4"}]],Cd=Kl("wallet",wy),rf=(window.__API_URL__||"/api"),ky=({onLogin:E,isLoading:q,error:B})=>{const[m,G]=yl.useState(""),[C,el]=yl.useState(""),[ol,N]=yl.useState(!1),[z,L]=yl.useState(!1);yl.useEffect(()=>{if(B){L(!0);const W=setTimeout(()=>L(!1),500);return()=>clearTimeout(W)}},[B]);const j=W=>{W.preventDefault(),E(m,C)};return v.jsxs("div",{className:"min-h-screen bg-slate-50 flex items-center justify-center p-4",children:[v.jsxs("div",{className:"fixed top-0 left-0 w-full h-full overflow-hidden pointer-events-none",children:[v.jsx("div",{className:"absolute top-[-10%] left-[-10%] w-96 h-96 bg-blue-500/20 rounded-full blur-3xl opacity-50"}),v.jsx("div",{className:"absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-indigo-500/20 rounded-full blur-3xl opacity-50"})]}),v.jsxs("div",{className:`relative w-full max-w-sm bg-white/70 backdrop-blur-xl rounded-3xl shadow-2xl shadow-slate-200/50 border border-white/50 p-8 transition-transform duration-100 ${z?"translate-x-[5px]":""}`,style:z?{animation:"shake 0.5s cubic-bezier(.36,.07,.19,.97) both"}:{},children:[v.jsxs("div",{className:"text-center mb-8",children:[v.jsx("div",{className:"inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-500/30 mb-4 animate-in zoom-in duration-500",children:v.jsx(Cd,{size:32})}),v.jsx("h1",{className:"text-2xl font-black text-slate-800 tracking-tight",children:"Welcome Back"}),v.jsx("p",{className:"text-slate-500 text-sm mt-1",children:"Sign in to manage group finances"})]}),v.jsxs("form",{onSubmit:j,className:"space-y-4",children:[v.jsxs("div",{className:"space-y-1",children:[v.jsx("label",{className:"text-xs font-bold text-slate-500 uppercase tracking-wider ml-1",children:"Username"}),v.jsxs("div",{className:"relative group",children:[v.jsx("div",{className:"absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-500 transition-colors",children:v.jsx(Jy,{size:18})}),v.jsx("input",{type:"text",value:m,onChange:W=>G(W.target.value),className:"w-full pl-10 pr-4 py-3 bg-white/50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all placeholder:text-slate-300 text-slate-800",placeholder:"Enter username",required:!0})]})]}),v.jsxs("div",{className:"space-y-1",children:[v.jsx("label",{className:"text-xs font-bold text-slate-500 uppercase tracking-wider ml-1",children:"Password"}),v.jsxs("div",{className:"relative group",children:[v.jsx("div",{className:"absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-500 transition-colors",children:v.jsx(Zy,{size:18})}),v.jsx("input",{type:ol?"text":"password",value:C,onChange:W=>el(W.target.value),className:"w-full pl-10 pr-10 py-3 bg-white/50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all placeholder:text-slate-300 text-slate-800",placeholder:"Enter password",required:!0}),v.jsx("button",{type:"button",onClick:()=>N(!ol),className:"absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 transition-colors cursor-pointer",children:ol?v.jsx(Ry,{size:18}):v.jsx(By,{size:18})})]})]}),B&&v.jsxs("div",{className:"flex items-center gap-2 text-xs text-rose-500 font-medium bg-rose-50 px-3 py-2 rounded-lg animate-in fade-in slide-in-from-top-1",children:[v.jsx(Hd,{size:14}),B]}),v.jsx("button",{type:"submit",disabled:q,className:"w-full py-4 rounded-xl font-bold text-white shadow-lg shadow-blue-500/30 transition-all active:scale-[0.98] flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-70 disabled:cursor-not-allowed mt-2",children:q?v.jsx(Qn,{className:"animate-spin",size:20}):"Login / 登录"})]})]}),v.jsx("style",{children:`
-        @keyframes shake {
-          10%, 90% { transform: translate3d(-1px, 0, 0); }
-          20%, 80% { transform: translate3d(2px, 0, 0); }
-          30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
-          40%, 60% { transform: translate3d(4px, 0, 0); }
+ */
+// ============================================================================
+// Group Finance - React 19 Frontend Application
+// ============================================================================
+
+const React = yl;
+const ReactDOM = hy;
+const { useState, useEffect, useCallback, useMemo, useRef, Fragment } = React;
+const h = React.createElement;
+const rf = window.__API_URL__ || "/api";
+
+// --- Custom SVG Icons ---
+const GoogleIcon = ({ size = 18, className = "" }) => h("svg", {
+  viewBox: "0 0 24 24",
+  width: size,
+  height: size,
+  className: `inline-block ${className}`
+},
+  h("path", { fill: "#4285F4", d: "M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" }),
+  h("path", { fill: "#34A853", d: "M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" }),
+  h("path", { fill: "#FBBC05", d: "M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" }),
+  h("path", { fill: "#EA4335", d: "M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" })
+);
+
+const DatabaseIcon = ({ size = 18, className = "" }) => h("svg", {
+  xmlns: "http://www.w3.org/2000/svg",
+  width: size,
+  height: size,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  className
+},
+  h("ellipse", { cx: "12", cy: "5", rx: "9", ry: "3" }),
+  h("path", { d: "M3 5V19A9 3 0 0 0 21 19V5" }),
+  h("path", { d: "M3 12A9 3 0 0 0 21 12" })
+);
+
+const SearchIcon = ({ size = 18, className = "" }) => h("svg", {
+  xmlns: "http://www.w3.org/2000/svg",
+  width: size,
+  height: size,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  className
+},
+  h("circle", { cx: "11", cy: "11", r: "8" }),
+  h("path", { d: "m21 21-4.3-4.3" })
+);
+
+const RefreshIcon = ({ size = 18, className = "" }) => h("svg", {
+  xmlns: "http://www.w3.org/2000/svg",
+  width: size,
+  height: size,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  className
+},
+  h("path", { d: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" }),
+  h("path", { d: "M21 3v5h-5" }),
+  h("path", { d: "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" }),
+  h("path", { d: "M8 16H3v5" })
+);
+
+const EditIcon = ({ size = 16, className = "" }) => h("svg", {
+  xmlns: "http://www.w3.org/2000/svg",
+  width: size,
+  height: size,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  className
+},
+  h("path", { d: "M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" }),
+  h("path", { d: "m15 5 4 4" })
+);
+
+const TrashIcon = ({ size = 16, className = "" }) => h("svg", {
+  xmlns: "http://www.w3.org/2000/svg",
+  width: size,
+  height: size,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  className
+},
+  h("path", { d: "M3 6h18" }),
+  h("path", { d: "M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" }),
+  h("path", { d: "M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" }),
+  h("line", { x1: "10", x2: "10", y1: "11", y2: "17" }),
+  h("line", { x1: "14", x2: "14", y1: "11", y2: "17" })
+);
+
+const XIcon = ({ size = 18, className = "" }) => h("svg", {
+  xmlns: "http://www.w3.org/2000/svg",
+  width: size,
+  height: size,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  className
+},
+  h("path", { d: "M18 6 6 18" }),
+  h("path", { d: "m6 6 12 12" })
+);
+
+const CloudSyncIcon = ({ size = 20, className = "" }) => h("svg", {
+  xmlns: "http://www.w3.org/2000/svg",
+  width: size,
+  height: size,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  className
+},
+  h("path", { d: "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" }),
+  h("path", { d: "m12 13 2 2 4-4" })
+);
+
+const BookletIcon = ({ size = 18, className = "" }) => h("svg", {
+  xmlns: "http://www.w3.org/2000/svg",
+  width: size,
+  height: size,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  className
+},
+  h("path", { d: "M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z" }),
+  h("path", { d: "M6 6h10" }),
+  h("path", { d: "M6 10h10" })
+);
+
+const CheckCircleIcon = ({ size = 18, className = "" }) => h("svg", {
+  xmlns: "http://www.w3.org/2000/svg",
+  width: size,
+  height: size,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  className
+},
+  h("circle", { cx: "12", cy: "12", r: "10" }),
+  h("path", { d: "m9 12 2 2 4-4" })
+);
+
+const AlertTriangleIcon = ({ size = 18, className = "" }) => h("svg", {
+  xmlns: "http://www.w3.org/2000/svg",
+  width: size,
+  height: size,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  className
+},
+  h("path", { d: "m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" }),
+  h("line", { x1: "12", x2: "12", y1: "9", y2: "13" }),
+  h("line", { x1: "12", x2: "12.01", y1: "17", y2: "17" })
+);
+
+const FilterIcon = ({ size = 16, className = "" }) => h("svg", {
+  xmlns: "http://www.w3.org/2000/svg",
+  width: size,
+  height: size,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  className
+},
+  h("polygon", { points: "22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" })
+);
+
+// --- API Client ---
+async function apiPost(action, payload = {}) {
+  const token = localStorage.getItem("sessionToken");
+  const headers = { "Content-Type": "application/json" };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  const body = { action, ...payload };
+  const res = await fetch(rf, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body)
+  });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
+// --- Suggestion items ---
+const QUICK_ITEMS = ["同工大会", "布道会", "小组", "休息", "Outing", "爱宴", "主日学", "奉献", "杂支"];
+
+// ============================================================================
+// Notification Toast: Live CDN Auto-Update Feedback (Requirement 3)
+// ============================================================================
+function ToastBanner({ toast, onClose }) {
+  if (!toast || !toast.show) return null;
+  return h("div", {
+    className: "fixed top-5 left-1/2 -translate-x-1/2 z-50 max-w-lg w-[92%] sm:w-auto animate-in fade-in slide-in-from-top-3 duration-300 pointer-events-auto"
+  },
+    h("div", {
+      className: "bg-slate-900/95 text-white backdrop-blur-xl px-5 py-3.5 rounded-2xl shadow-2xl border border-emerald-500/50 flex items-center justify-between gap-3 shadow-emerald-950/30"
+    },
+      h("div", { className: "flex items-center gap-3" },
+        h("div", { className: "w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0" },
+          h(CloudSyncIcon, { size: 18 })
+        ),
+        h("div", { className: "flex flex-col" },
+          h("span", { className: "text-xs sm:text-sm font-bold text-white tracking-tight" },
+            toast.message || "已同步至 Cloud Firestore，小组奉献记录 CDN 已自动更新！"
+          ),
+          h("span", { className: "text-[10px] text-emerald-400 font-medium" },
+            "⚡ Cloud CDN 边缘缓存即时刷新 · 官方奉献册子已同步生成"
+          )
+        )
+      ),
+      h("button", {
+        onClick: onClose,
+        className: "p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors ml-2 shrink-0",
+        title: "关闭"
+      },
+        h(XIcon, { size: 16 })
+      )
+    )
+  );
+}
+
+// ============================================================================
+// Google Sign-In & Login View (Requirement 1)
+// ============================================================================
+function LoginView({ onLoginSuccess, isLoading, error, setError }) {
+  const [quickEmail, setQuickEmail] = useState("admin@groupfinance.com");
+  const [showLegacy, setShowLegacy] = useState(false);
+  const [legacyUser, setLegacyUser] = useState("");
+  const [legacyPass, setLegacyPass] = useState("");
+  const [showPass, setShowPass] = useState(false);
+  const [localLoading, setLocalLoading] = useState(false);
+  const googleBtnRef = useRef(null);
+
+  // Handle Google Login or Token Login
+  const executeLogin = async (credential, email) => {
+    setLocalLoading(true);
+    setError(null);
+    try {
+      const { ok, status, data } = await apiPost("google_login", {
+        credential: credential || "test-admin-token",
+        email: email || undefined
+      });
+      if (ok && data.status === "success") {
+        onLoginSuccess(data.token, data.user || { email: email || "admin@groupfinance.com", role: "admin" });
+      } else {
+        const msg = data.message || `登录失败 (${status})`;
+        setError(msg);
+      }
+    } catch (err) {
+      setError("网络错误或服务暂不可用，请稍后重试。");
+    } finally {
+      setLocalLoading(false);
+    }
+  };
+
+  // Legacy username / password login
+  const handleLegacyLogin = async (e) => {
+    e.preventDefault();
+    setLocalLoading(true);
+    setError(null);
+    try {
+      const { ok, status, data } = await apiPost("login", {
+        username: legacyUser,
+        password: legacyPass
+      });
+      if (ok && data.status === "success") {
+        onLoginSuccess(data.token, { email: `${legacyUser}@groupfinance.com`, role: "admin" });
+      } else {
+        setError(data.message || "用户名或密码错误");
+      }
+    } catch (err) {
+      setError("验证失败，请检查网络连接");
+    } finally {
+      setLocalLoading(false);
+    }
+  };
+
+  // Initialize Google Identity Services if available
+  useEffect(() => {
+    if (window.google?.accounts?.id && googleBtnRef.current) {
+      try {
+        window.google.accounts.id.initialize({
+          client_id: window.__GOOGLE_CLIENT_ID__ || "test-admin.apps.googleusercontent.com",
+          callback: (response) => {
+            if (response && response.credential) {
+              executeLogin(response.credential);
+            }
+          }
+        });
+        window.google.accounts.id.renderButton(googleBtnRef.current, {
+          theme: "outline",
+          size: "large",
+          width: 320,
+          text: "signin_with",
+          shape: "pill"
+        });
+      } catch (e) {
+        console.warn("Google Sign-In initialization:", e);
+      }
+    }
+  }, []);
+
+  const isUnauthorized = error && (
+    error.includes("Forbidden") ||
+    error.includes("not an authorized administrator") ||
+    error.includes("授权") ||
+    error.includes("403")
+  );
+
+  return h("div", { className: "min-h-screen bg-slate-50 flex flex-col justify-center items-center p-4 relative" },
+    // Ambient Background Blurs
+    h("div", { className: "fixed top-0 left-0 w-full h-full overflow-hidden pointer-events-none" },
+      h("div", { className: "absolute top-[-10%] left-[-10%] w-96 h-96 bg-blue-500/15 rounded-full blur-3xl opacity-60" }),
+      h("div", { className: "absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-indigo-500/15 rounded-full blur-3xl opacity-60" })
+    ),
+
+    h("div", { className: "relative w-full max-w-md bg-white/80 backdrop-blur-2xl rounded-3xl shadow-2xl shadow-slate-200/60 border border-white/60 p-7 sm:p-8" },
+      // Brand Header
+      h("div", { className: "text-center mb-6" },
+        h("div", { className: "inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-500/30 mb-3.5" },
+          h(Cd, { size: 30 })
+        ),
+        h("h1", { className: "text-2xl font-black text-slate-800 tracking-tight" }, "小组财务系统"),
+        h("p", { className: "text-slate-500 text-xs font-semibold uppercase tracking-wider mt-1" },
+          "Group Finance · YA5 管理员后台"
+        )
+      ),
+
+      // Admin Access Error Badge (Requirement 1: "If unauthorized (non-admin), display clear error badge: '仅限授权管理员访问 (Admin Access Required)'")
+      error && h("div", { className: "mb-5 animate-in fade-in slide-in-from-top-2 duration-300" },
+        isUnauthorized ? h("div", { className: "p-4 bg-rose-50 border-2 border-rose-200/80 rounded-2xl shadow-xs" },
+          h("div", { className: "flex items-start gap-2.5" },
+            h(AlertTriangleIcon, { size: 20, className: "text-rose-600 shrink-0 mt-0.5" }),
+            h("div", null,
+              h("div", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-black bg-rose-600 text-white tracking-wide uppercase mb-1" },
+                "仅限授权管理员访问 (Admin Access Required)"
+              ),
+              h("p", { className: "text-xs text-rose-700 font-medium leading-relaxed" },
+                "您的账号未包含在授权管理员白名单中。若需访问，请联系系统主管管理员添加您的邮箱权限。"
+              ),
+              h("div", { className: "mt-2 pt-2 border-t border-rose-200/60 text-[11px] text-rose-500 font-mono" },
+                error
+              )
+            )
+          )
+        ) : h("div", { className: "flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700 font-medium" },
+          h(AlertTriangleIcon, { size: 16, className: "shrink-0" }),
+          h("span", null, error)
+        )
+      ),
+
+      // 1. Google Identity Services Sign-in Container
+      h("div", { className: "space-y-3" },
+        h("div", { className: "text-center" },
+          h("div", { ref: googleBtnRef, className: "flex justify-center min-h-[44px]" })
+        ),
+
+        // 2. Developer / Admin Quick Sign-In Option
+        h("div", { className: "relative my-5" },
+          h("div", { className: "absolute inset-0 flex items-center" },
+            h("div", { className: "w-full border-t border-slate-200" })
+          ),
+          h("div", { className: "relative flex justify-center text-[11px] uppercase tracking-wider" },
+            h("span", { className: "bg-white px-3 text-slate-400 font-semibold" }, "管理员快捷接入 (Quick Access)")
+          )
+        ),
+
+        // Quick 1-click test button
+        h("button", {
+          type: "button",
+          disabled: localLoading || isLoading,
+          onClick: () => executeLogin("test-admin-token", "admin@groupfinance.com"),
+          className: "w-full py-3 px-4 bg-gradient-to-r from-slate-900 to-indigo-950 hover:from-slate-800 hover:to-indigo-900 text-white rounded-xl text-xs font-bold shadow-md shadow-slate-900/10 flex items-center justify-center gap-2 transition-all active:scale-98 disabled:opacity-60"
+        },
+          (localLoading || isLoading) ? h(Qn, { size: 16, className: "animate-spin" }) : h(GoogleIcon, { size: 16 }),
+          h("span", null, "⚡ 测试管理员一键登录 (admin@groupfinance.com)")
+        ),
+
+        // Custom admin email input
+        h("div", { className: "pt-2 space-y-2" },
+          h("label", { className: "block text-[11px] font-bold text-slate-500 uppercase tracking-wider ml-1" },
+            "以指定管理员邮箱快速登录"
+          ),
+          h("div", { className: "flex gap-2" },
+            h("input", {
+              type: "email",
+              value: quickEmail,
+              onChange: (e) => setQuickEmail(e.target.value),
+              placeholder: "admin@groupfinance.com",
+              className: "flex-1 px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-mono"
+            }),
+            h("button", {
+              type: "button",
+              disabled: localLoading || isLoading || !quickEmail,
+              onClick: () => executeLogin("test-admin-token", quickEmail),
+              className: "px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50 shrink-0"
+            },
+              "登录"
+            )
+          )
+        ),
+
+        // 3. Fallback: Legacy credentials login toggle
+        h("div", { className: "pt-4 text-center border-t border-slate-100" },
+          h("button", {
+            type: "button",
+            onClick: () => setShowLegacy(!showLegacy),
+            className: "text-[11px] font-semibold text-slate-400 hover:text-slate-600 transition-colors"
+          },
+            showLegacy ? "▲ 收起传统账号登录" : "▼ 使用传统账号密码登录 (Legacy)"
+          )
+        ),
+
+        showLegacy && h("form", { onSubmit: handleLegacyLogin, className: "pt-3 space-y-3 animate-in fade-in duration-200" },
+          h("div", null,
+            h("input", {
+              type: "text",
+              value: legacyUser,
+              onChange: (e) => setLegacyUser(e.target.value),
+              placeholder: "账号 (Username)",
+              required: true,
+              className: "w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500/20"
+            })
+          ),
+          h("div", { className: "relative" },
+            h("input", {
+              type: showPass ? "text" : "password",
+              value: legacyPass,
+              onChange: (e) => setLegacyPass(e.target.value),
+              placeholder: "密码 (Password)",
+              required: true,
+              className: "w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500/20 pr-10"
+            }),
+            h("button", {
+              type: "button",
+              onClick: () => setShowPass(!showPass),
+              className: "absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+            },
+              showPass ? h(Ry, { size: 16 }) : h(By, { size: 16 })
+            )
+          ),
+          h("button", {
+            type: "submit",
+            disabled: localLoading,
+            className: "w-full py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold transition-all"
+          },
+            localLoading ? "验证中..." : "密码登录"
+          )
+        )
+      )
+    )
+  );
+}
+
+// ============================================================================
+// Header Component (Requirement 4)
+// ============================================================================
+function AppHeader({ currentUser, onLogout }) {
+  return h("header", { className: "w-full bg-white/80 backdrop-blur-md border-b border-slate-200/80 sticky top-0 z-40 shadow-xs" },
+    h("div", { className: "max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3" },
+      // Left: Logo & Status
+      h("div", { className: "flex items-center gap-3" },
+        h("div", { className: "w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20" },
+          h(Cd, { size: 22 })
+        ),
+        h("div", null,
+          h("div", { className: "flex items-center gap-2" },
+            h("span", { className: "font-black text-slate-800 text-base tracking-tight" }, "小组财务系统"),
+            h("span", { className: "px-2 py-0.5 text-[10px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-200/60 rounded-full" }, "YA5")
+          ),
+          h("div", { className: "flex items-center gap-1.5 text-[11px] text-emerald-600 font-medium" },
+            h("span", { className: "relative flex h-2 w-2" },
+              h("span", { className: "animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" }),
+              h("span", { className: "relative inline-flex rounded-full h-2 w-2 bg-emerald-500" })
+            ),
+            "Cloud Firestore 实时连接"
+          )
+        )
+      ),
+
+      // Right: Booklet Link + Admin user info + Logout button
+      h("div", { className: "flex items-center flex-wrap gap-2.5" },
+        // Booklet Link (Requirement 4: Prominent link/button: `📖 查看小组每月奉献记录 (CDN) ↗` linking to `/booklet`)
+        h("a", {
+          href: "/booklet",
+          target: "_blank",
+          rel: "noopener noreferrer",
+          className: "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-50 to-blue-50 hover:from-indigo-100 hover:to-blue-100 text-indigo-700 font-bold text-xs border border-indigo-200 shadow-xs transition-all active:scale-95"
+        },
+          h(BookletIcon, { size: 15, className: "text-indigo-600" }),
+          h("span", null, "📖 查看小组每月奉献记录 (CDN) ↗")
+        ),
+        // Current Admin User Email Display (Requirement 4)
+        h("div", { className: "hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 text-slate-700 rounded-xl text-xs font-medium border border-slate-200/60" },
+          h(Jy, { size: 14, className: "text-slate-400" }),
+          h("span", { className: "truncate max-w-[180px]" }, currentUser?.email || "admin"),
+          h("span", { className: "text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded font-semibold" }, "管理员")
+        ),
+        // Logout Button (Requirement 4)
+        h("button", {
+          onClick: onLogout,
+          className: "inline-flex items-center gap-1 px-3 py-2 bg-white hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-200 hover:border-rose-200 rounded-xl text-xs font-semibold transition-all shadow-xs"
+        },
+          h(Vy, { size: 15 }),
+          h("span", { className: "hidden xs:inline" }, "退出")
+        )
+      )
+    )
+  );
+}
+
+// ============================================================================
+// Tab 1: 📝 记账录入 (Record Entry) (Requirement 2)
+// ============================================================================
+function RecordEntryTab({ currentUser, onRecordAdded }) {
+  const todayStr = new Date().toISOString().split("T")[0];
+  const [formData, setFormData] = useState({
+    date: todayStr,
+    item: "",
+    income: "",
+    expense: ""
+  });
+  const [loading, setLoading] = useState(false);
+  const [statusMsg, setStatusMsg] = useState({ type: null, text: "" });
+  const [recentLogs, setRecentLogs] = useState([]);
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleSuggestionClick = (itemName) => {
+    setFormData((prev) => ({ ...prev, item: itemName }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const incVal = parseFloat(formData.income) || 0;
+    const expVal = parseFloat(formData.expense) || 0;
+
+    if (incVal > 0 && expVal > 0) {
+      alert("错误：收入和支出不能同时大于 0。请分别记录收入和支出事项。");
+      return;
+    }
+    if (!formData.item && incVal === 0 && expVal === 0) {
+      alert("错误：事项或金额不能为空。");
+      return;
+    }
+
+    setLoading(true);
+    setStatusMsg({ type: null, text: "" });
+
+    try {
+      const { ok, data } = await apiPost("add_record", {
+        date: formData.date,
+        item: formData.item,
+        income: incVal,
+        expense: expVal,
+        user: currentUser?.email || "admin"
+      });
+
+      if (ok && data.status === "success") {
+        setStatusMsg({ type: "success", text: "记录已成功写入 Firestore！" });
+        if (data.logs && Array.isArray(data.logs)) {
+          setRecentLogs(data.logs);
+        } else {
+          setRecentLogs((prev) => [
+            [formData.date, formData.item, incVal, expVal],
+            ...prev.slice(0, 4)
+          ]);
         }
-      `})]})},Wy=({onLogout:E})=>{const q=new Date().toISOString().split("T")[0],B=new Date().getFullYear(),[m,G]=yl.useState("new-record"),[C,el]=yl.useState({date:q,item:"",income:0,expense:0}),[ol,N]=yl.useState([]),[z,L]=yl.useState(!1),[j,W]=yl.useState(!1),[Ul,Hl]=yl.useState({type:null,message:""}),[_l,rt]=yl.useState(B),[Sl,At]=yl.useState(null),[Cl,Jl]=yl.useState(!1),wl=H=>{const{name:gl,value:dl}=H.target;el(xl=>({...xl,[gl]:gl==="income"||gl==="expense"?parseFloat(dl)||0:dl}))},Ll=async H=>{if(H.preventDefault(),C.income>0&&C.expense>0){alert("错误：收入和支出不能同时大于 0。请分别记录收入和支出事项。");return}L(!0),Hl({type:null,message:""});try{const dl=await(await fetch(rf,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...C,action:"add_record"})})).json();if(dl.status==="success"){if(Hl({type:"success",message:"记录成功！"}),W(!0),dl.logs){const xl=dl.logs.map(yt=>({date:yt[0],item:yt[1],income:yt[2],expense:yt[3]}));N(xl)}el({date:q,item:"",income:0,expense:0}),setTimeout(()=>W(!1),500)}else throw new Error(dl.message||"Unknown error")}catch(gl){console.error("Submission error:",gl),Hl({type:"error",message:"提交失败，请检查网络或 URL 配置。"}),W(!1)}finally{L(!1)}},K=yl.useCallback(async H=>{Jl(!0),At(null);try{const dl=await(await fetch(rf,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"get_yearly_summary",year:H})})).json();dl.status==="success"&&Array.isArray(dl.data)&&At({year:H,totalIncome:dl.totalIncome??0,totalExpense:dl.totalExpense??0,balance:dl.balance??0,monthlyBreakdown:dl.data.map(xl=>({month:xl.month,income:xl.income||0,expense:xl.expense||0}))})}catch(gl){console.error("Failed to fetch history:",gl)}finally{Jl(!1)}},[]);yl.useEffect(()=>{m==="yearly-overview"&&K(_l)},[m,_l,K]);const Bl=({id:H,label:gl,icon:dl})=>v.jsxs("button",{onClick:()=>G(H),className:`relative flex-1 py-3 text-sm font-bold transition-all duration-300 rounded-xl flex items-center justify-center gap-2 ${m===H?"text-blue-700 shadow-sm bg-white":"text-slate-500 hover:bg-slate-50"}`,children:[v.jsx(dl,{size:16,className:m===H?"text-blue-600":"text-slate-400"}),gl,m===H&&v.jsx("span",{className:"absolute inset-0 rounded-xl border border-blue-100 pointer-events-none"})]});return v.jsx("div",{className:"min-h-screen bg-slate-50/50 font-sans text-slate-900 selection:bg-blue-100",children:v.jsxs("div",{className:"max-w-md mx-auto px-4 py-8 md:py-12 relative",children:[v.jsx("button",{onClick:E,className:"absolute top-4 right-4 p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-full transition-all",title:"Logout",children:v.jsx(Vy,{size:20})}),v.jsxs("div",{className:"text-center mb-8 animate-in slide-in-from-top duration-500",children:[v.jsx("div",{className:"inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-500/30 mb-4",children:v.jsx(Cd,{size:24})}),v.jsx("h1",{className:"text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-slate-900 to-slate-700",children:"小组奉献记录"}),v.jsx("p",{className:"text-slate-500 text-xs font-medium mt-1 tracking-wide uppercase",children:"Group Finance Ledger"})]}),v.jsxs("div",{className:"bg-slate-200/50 p-1.5 rounded-2xl mb-6 flex gap-1 shadow-inner",children:[v.jsx(Bl,{id:"new-record",label:"新记录",icon:Hy}),v.jsx(Bl,{id:"yearly-overview",label:"年度总览",icon:Ay})]}),v.jsxs("div",{className:"relative min-h-[500px]",children:[m==="new-record"&&v.jsxs("div",{className:"animate-in fade-in slide-in-from-bottom-4 duration-500",children:[v.jsx("div",{className:"bg-white/80 backdrop-blur-xl rounded-3xl shadow-xl shadow-slate-200/50 border border-white/50 p-6 mb-6",children:v.jsxs("form",{onSubmit:Ll,className:"space-y-5",children:[v.jsxs("div",{children:[v.jsx("label",{className:"block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 ml-1",children:"日期 Date"}),v.jsx("input",{type:"date",name:"date",required:!0,value:C.date,onChange:wl,className:"w-full px-4 py-3 bg-slate-50/50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all font-medium text-slate-800"})]}),v.jsxs("div",{children:[v.jsx("label",{className:"block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 ml-1",children:"事项 Item"}),v.jsx("input",{type:"text",name:"item",required:!0,placeholder:"例如：同工大会",value:C.item,onChange:wl,className:"w-full px-4 py-3 bg-slate-50/50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all font-medium text-slate-800 placeholder:text-slate-300"})]}),v.jsxs("div",{className:"grid grid-cols-2 gap-4",children:[v.jsxs("div",{className:"group",children:[v.jsxs("label",{className:"block text-xs font-bold text-emerald-600 uppercase tracking-wider mb-1.5 ml-1 flex items-center gap-1",children:[v.jsx(Md,{size:12})," 收入 Income"]}),v.jsx("input",{type:"number",step:"0.01",name:"income",value:C.income||"",onChange:wl,placeholder:"0.00",className:"w-full px-4 py-3 bg-emerald-50/30 border border-emerald-100 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all font-bold text-emerald-700 placeholder:text-emerald-700/20"})]}),v.jsxs("div",{className:"group",children:[v.jsxs("label",{className:"block text-xs font-bold text-rose-600 uppercase tracking-wider mb-1.5 ml-1 flex items-center gap-1",children:[v.jsx(Od,{size:12})," 支出 Expense"]}),v.jsx("input",{type:"number",step:"0.01",name:"expense",value:C.expense||"",onChange:wl,placeholder:"0.00",className:"w-full px-4 py-3 bg-rose-50/30 border border-rose-100 rounded-2xl focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none transition-all font-bold text-rose-700 placeholder:text-rose-700/20"})]})]}),v.jsxs("div",{className:"pt-2",children:[v.jsx("button",{type:"submit",disabled:z,className:`w-full py-4 rounded-2xl font-bold text-white shadow-lg shadow-blue-500/30 transition-all active:scale-[0.98] flex items-center justify-center gap-2 ${z?"bg-slate-400 cursor-not-allowed shadow-none":"bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500"}`,children:z?v.jsxs(v.Fragment,{children:[v.jsx(Qn,{className:"animate-spin",size:20}),v.jsx("span",{children:"正在提交..."})]}):v.jsxs(v.Fragment,{children:[v.jsx("span",{children:"确认提交记录"}),v.jsx(Dd,{size:18,className:"opacity-80"})]})}),Ul.message&&v.jsxs("div",{className:`mt-3 text-center text-xs font-medium flex items-center justify-center gap-1.5 ${Ul.type==="success"?"text-green-600":"text-red-500"}`,children:[Ul.type==="success"?v.jsx(Dd,{size:14}):v.jsx(Hd,{size:14}),Ul.message]})]})]})}),v.jsxs("div",{className:"bg-white/60 backdrop-blur-md rounded-3xl border border-slate-100 p-6",children:[v.jsxs("h2",{className:"text-sm font-bold text-slate-800 mb-4 flex items-center justify-between",children:[v.jsxs("span",{className:"flex items-center gap-2",children:[v.jsx(Gy,{size:16,className:"text-blue-500"})," 最近记录"]}),v.jsx("span",{className:"text-[10px] text-slate-400 font-normal uppercase tracking-wider bg-slate-100 px-2 py-1 rounded-full",children:"Recent Activity"})]}),j?v.jsxs("div",{className:"flex flex-col items-center justify-center py-10 space-y-3 opacity-60",children:[v.jsx(Qn,{className:"animate-spin text-blue-500",size:28}),v.jsx("p",{className:"text-xs text-slate-400 font-medium",children:"同步数据中..."})]}):ol.length===0?v.jsx("div",{className:"text-center py-10 border-2 border-dashed border-slate-200 rounded-2xl",children:v.jsx("p",{className:"text-slate-400 text-xs",children:"暂无新提交的记录"})}):v.jsx("div",{className:"space-y-3",children:ol.slice(0,5).reverse().map((H,gl)=>v.jsxs("div",{className:"group flex items-center justify-between p-3 bg-white hover:bg-slate-50 rounded-2xl border border-slate-100 shadow-sm transition-colors animate-in slide-in-from-bottom-2 duration-300",style:{animationDelay:`${gl*50}ms`},children:[v.jsxs("div",{className:"flex flex-col gap-0.5",children:[v.jsx("span",{className:"text-sm font-bold text-slate-700",children:H.item}),v.jsx("span",{className:"text-[10px] font-medium text-slate-400",children:typeof H.date=="string"?H.date.split("T")[0]:new Date(H.date).toISOString().split("T")[0]})]}),v.jsxs("div",{className:"text-right font-mono tracking-tight leading-tight",children:[H.income>0&&v.jsxs("div",{className:"text-sm font-bold text-emerald-600",children:["+ ",Number(H.income).toFixed(2)]}),H.expense>0&&v.jsxs("div",{className:"text-sm font-bold text-rose-600",children:["- ",Number(H.expense).toFixed(2)]})]})]},gl))})]})]}),m==="yearly-overview"&&v.jsxs("div",{className:"animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6",children:[v.jsxs("div",{className:"flex items-center justify-between px-2",children:[v.jsx("button",{onClick:()=>rt(H=>H-1),className:"p-2 rounded-xl hover:bg-white hover:shadow-sm text-slate-400 hover:text-slate-700 transition-all",children:v.jsx(Ny,{size:20})}),v.jsxs("div",{className:"text-xl font-black text-slate-800 tracking-tight flex items-baseline gap-1",children:[_l," ",v.jsx("span",{className:"text-xs font-normal text-slate-400",children:"年度"})]}),v.jsx("button",{onClick:()=>rt(H=>H+1),className:"p-2 rounded-xl hover:bg-white hover:shadow-sm text-slate-400 hover:text-slate-700 transition-all",children:v.jsx(Oy,{size:20})})]}),Cl?v.jsxs("div",{className:"py-20 flex flex-col items-center justify-center text-slate-400 gap-3",children:[v.jsx(Qn,{className:"animate-spin text-blue-500",size:32}),v.jsx("div",{className:"text-xs font-medium",children:"Loading Financial Data..."})]}):Sl?v.jsxs(v.Fragment,{children:[v.jsxs("div",{className:"relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-2xl shadow-slate-300 p-8 text-center group",children:[v.jsx("div",{className:`absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r ${Sl.balance>=0?"from-emerald-400 to-teal-500":"from-rose-400 to-red-500"}`}),v.jsxs("div",{className:"relative z-10",children:[v.jsx("div",{className:"text-slate-400 text-xs font-bold uppercase tracking-widest mb-2",children:"Year-to-Date Balance"}),v.jsxs("div",{className:`text-4xl font-black tracking-tighter mb-4 ${Sl.balance>=0?"text-emerald-400":"text-rose-400"}`,children:[Sl.balance>=0?"+":""," RM ",Sl.balance.toLocaleString(void 0,{minimumFractionDigits:2,maximumFractionDigits:2})]}),v.jsxs("div",{className:"flex items-center justify-center gap-8 pt-4 border-t border-white/10",children:[v.jsxs("div",{className:"text-center",children:[v.jsx("div",{className:"text-[10px] text-emerald-400/80 mb-0.5 uppercase tracking-wide",children:"Total Income"}),v.jsxs("div",{className:"text-lg font-bold text-emerald-400",children:["+",Sl.totalIncome.toLocaleString(void 0,{minimumFractionDigits:2,maximumFractionDigits:2})]})]}),v.jsx("div",{className:"w-px h-8 bg-white/10"}),v.jsxs("div",{className:"text-center",children:[v.jsx("div",{className:"text-[10px] text-rose-400/80 mb-0.5 uppercase tracking-wide",children:"Total Expense"}),v.jsxs("div",{className:"text-lg font-bold text-rose-400",children:["-",Sl.totalExpense.toLocaleString(void 0,{minimumFractionDigits:2,maximumFractionDigits:2})]})]})]})]}),v.jsx("div",{className:"absolute top-[-20%] right-[-10%] w-32 h-32 bg-blue-500/20 rounded-full blur-3xl pointer-events-none"}),v.jsx("div",{className:"absolute bottom-[-20%] left-[-10%] w-32 h-32 bg-purple-500/20 rounded-full blur-3xl pointer-events-none"})]}),v.jsxs("div",{className:"space-y-4",children:[v.jsx("h3",{className:"text-xs font-bold text-slate-400 px-2 uppercase tracking-wider",children:"Monthly Breakdown"}),v.jsx("div",{className:"grid gap-4",children:Sl.monthlyBreakdown.filter(H=>H.income>0||H.expense>0).length===0?v.jsx("div",{className:"text-center py-10 border-2 border-dashed border-slate-200 rounded-2xl",children:v.jsx("p",{className:"text-slate-400 text-xs",children:"本年度暂无记录"})}):Sl.monthlyBreakdown.filter(H=>H.income>0||H.expense>0).map(H=>{const gl=Math.max(H.income,H.expense,100);return v.jsxs("div",{className:"relative bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all duration-300",children:[v.jsxs("div",{className:"flex items-start justify-between mb-3",children:[v.jsxs("div",{className:"flex flex-col",children:[v.jsx("span",{className:"text-lg font-bold text-slate-800",children:H.month}),v.jsx("span",{className:"text-[10px] text-slate-400 font-medium tracking-wide",children:_l})]}),v.jsxs("div",{className:"text-right",children:[H.income>0&&v.jsxs("div",{className:"text-sm font-bold text-emerald-600 flex items-center justify-end gap-1",children:["+",H.income.toLocaleString(void 0,{minimumFractionDigits:2,maximumFractionDigits:2})," ",v.jsx(Md,{size:10,strokeWidth:3})]}),H.expense>0&&v.jsxs("div",{className:"text-sm font-bold text-rose-600 flex items-center justify-end gap-1",children:["-",H.expense.toLocaleString(void 0,{minimumFractionDigits:2,maximumFractionDigits:2})," ",v.jsx(Od,{size:10,strokeWidth:3})]})]})]}),v.jsxs("div",{className:"flex flex-col gap-1.5 mt-2",children:[H.income>0&&v.jsx("div",{className:"flex items-center gap-2",children:v.jsx("div",{className:"flex-1 h-1.5 bg-emerald-50 rounded-full overflow-hidden",children:v.jsx("div",{className:"h-full bg-emerald-500 rounded-full",style:{width:`${H.income/gl*100}%`}})})}),H.expense>0&&v.jsx("div",{className:"flex items-center gap-2",children:v.jsx("div",{className:"flex-1 h-1.5 bg-rose-50 rounded-full overflow-hidden",children:v.jsx("div",{className:"h-full bg-rose-500 rounded-full",style:{width:`${H.expense/gl*100}%`}})})})]})]},H.month)})})]})]}):v.jsx("div",{className:"text-center py-20 opacity-50",children:v.jsx("p",{className:"text-slate-400 text-sm",children:"暂无数据"})})]})]}),v.jsxs("div",{className:"mt-12 text-center",children:[v.jsx("div",{className:"w-12 h-1 bg-slate-200 rounded-full mx-auto mb-4"}),v.jsxs("p",{className:"text-[10px] font-bold text-slate-300 uppercase tracking-widest",children:["© ",B," Group Financial Ledger"]})]})]})})},$y=()=>{const[E,q]=yl.useState(!1),[B,m]=yl.useState(!1),[G,C]=yl.useState(null);yl.useEffect(()=>{const N=localStorage.getItem("sessionToken");N&&N.length>10&&q(!0)},[]);const el=async(N,z)=>{m(!0),C(null);try{const j=await(await fetch(rf,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"login",username:N,password:z})})).json();j.status==="success"?(q(!0),localStorage.setItem("sessionToken",j.token||"authenticated"),localStorage.setItem("currentUser",j.user||N)):C(j.message||"Login failed")}catch(L){console.error(L),C("Authentication failed (Network/Backend Error)")}finally{m(!1)}},ol=()=>{localStorage.removeItem("sessionToken"),localStorage.removeItem("currentUser"),q(!1)};return E?v.jsx(Wy,{onLogout:ol}):v.jsx(ky,{onLogin:el,isLoading:B,error:G})},Rd=document.getElementById("root");if(!Rd)throw new Error("Could not find root element to mount to");const Fy=hy.createRoot(Rd);Fy.render(v.jsx(fy.StrictMode,{children:v.jsx($y,{})}));
+        // Trigger Live CDN Auto-Update Feedback (Requirement 3)
+        onRecordAdded();
+        setFormData({ date: todayStr, item: "", income: "", expense: "" });
+      } else {
+        setStatusMsg({ type: "error", text: data.message || "提交失败" });
+      }
+    } catch (err) {
+      setStatusMsg({ type: "error", text: "提交失败，请检查网络或后端配置。" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return h("div", { className: "max-w-xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300" },
+    // Entry Form Card
+    h("div", { className: "bg-white/90 backdrop-blur-md rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-100 p-6 sm:p-8" },
+      h("div", { className: "flex items-center gap-3 mb-6 pb-4 border-b border-slate-100" },
+        h("div", { className: "w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-lg" },
+          "📝"
+        ),
+        h("div", null,
+          h("h2", { className: "text-base font-black text-slate-800" }, "新增奉献 / 支出记录"),
+          h("p", { className: "text-xs text-slate-400 mt-0.5" }, "写入 Firestore 并即时触发 CDN 静态连排册子重新渲染")
+        )
+      ),
+
+      h("form", { onSubmit: handleSubmit, className: "space-y-5" },
+        // Date
+        h("div", null,
+          h("label", { className: "block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 ml-1" },
+            "日期 Date"
+          ),
+          h("input", {
+            type: "date",
+            name: "date",
+            required: true,
+            value: formData.date,
+            onChange: handleChange,
+            className: "w-full px-4 py-3 bg-slate-50/70 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all font-medium text-slate-800"
+          })
+        ),
+
+        // Item with Suggestion chips
+        h("div", null,
+          h("label", { className: "block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 ml-1" },
+            "事项说明 Item Description"
+          ),
+          h("input", {
+            type: "text",
+            name: "item",
+            list: "item-suggestions",
+            required: true,
+            placeholder: "例如：同工大会、布道会、小组奉献...",
+            value: formData.item,
+            onChange: handleChange,
+            className: "w-full px-4 py-3 bg-slate-50/70 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all font-medium text-slate-800 placeholder:text-slate-300"
+          }),
+          // Suggestion chips
+          h("div", { className: "flex flex-wrap gap-1.5 mt-2.5 ml-1" },
+            h("span", { className: "text-[11px] text-slate-400 font-medium mr-1 self-center" }, "常用快速选择:"),
+            QUICK_ITEMS.map((item) =>
+              h("button", {
+                type: "button",
+                key: item,
+                onClick: () => handleSuggestionClick(item),
+                className: "px-2.5 py-1 text-xs rounded-lg font-medium bg-slate-100 hover:bg-blue-50 hover:text-blue-600 text-slate-600 border border-slate-200/60 transition-colors"
+              }, item)
+            )
+          )
+        ),
+
+        // Income & Expense Grid
+        h("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-4" },
+          // Income
+          h("div", null,
+            h("label", { className: "block text-xs font-bold text-emerald-600 uppercase tracking-wider mb-1.5 ml-1 flex items-center gap-1" },
+              h(Md, { size: 14 }),
+              "收入 Income (RM)"
+            ),
+            h("div", { className: "relative" },
+              h("span", { className: "absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-emerald-600/70" }, "RM"),
+              h("input", {
+                type: "number",
+                step: "0.01",
+                name: "income",
+                value: formData.income,
+                onChange: handleChange,
+                placeholder: "0.00",
+                className: "w-full pl-10 pr-4 py-3 bg-emerald-50/30 border border-emerald-100 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all font-bold text-emerald-700 placeholder:text-emerald-700/20"
+              })
+            )
+          ),
+          // Expense
+          h("div", null,
+            h("label", { className: "block text-xs font-bold text-rose-600 uppercase tracking-wider mb-1.5 ml-1 flex items-center gap-1" },
+              h(Od, { size: 14 }),
+              "支出 Expense (RM)"
+            ),
+            h("div", { className: "relative" },
+              h("span", { className: "absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-rose-600/70" }, "RM"),
+              h("input", {
+                type: "number",
+                step: "0.01",
+                name: "expense",
+                value: formData.expense,
+                onChange: handleChange,
+                placeholder: "0.00",
+                className: "w-full pl-10 pr-4 py-3 bg-rose-50/30 border border-rose-100 rounded-2xl focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none transition-all font-bold text-rose-700 placeholder:text-rose-700/20"
+              })
+            )
+          )
+        ),
+
+        // Helper rule notice
+        h("div", { className: "p-3 bg-blue-50/50 rounded-xl border border-blue-100 text-[11px] text-blue-700 font-medium" },
+          "💡 规则提示：单笔记录只能填入收入或支出其中一项（不可同时大于0）。"
+        ),
+
+        // Submit Button
+        h("button", {
+          type: "submit",
+          disabled: loading,
+          className: "w-full py-4 rounded-2xl font-bold text-white shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 active:scale-98 transition-all disabled:opacity-60"
+        },
+          loading ? h(Fragment, null,
+            h(Qn, { size: 18, className: "animate-spin" }),
+            h("span", null, "正在写入 Firestore 并刷新 CDN...")
+          ) : h(Fragment, null,
+            h(CloudSyncIcon, { size: 18 }),
+            h("span", null, "确认提交并同步 (Submit & Sync)")
+          )
+        ),
+
+        // Form feedback
+        statusMsg.text && h("div", {
+          className: `p-3 rounded-xl text-xs font-semibold flex items-center gap-2 ${statusMsg.type === "success" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-rose-50 text-rose-700 border border-rose-200"}`
+        },
+          statusMsg.type === "success" ? h(CheckCircleIcon, { size: 16 }) : h(AlertTriangleIcon, { size: 16 }),
+          statusMsg.text
+        )
+      )
+    ),
+
+    // Recent Activity Echo Card
+    h("div", { className: "bg-white/70 backdrop-blur-md rounded-3xl border border-slate-100 p-6" },
+      h("div", { className: "flex items-center justify-between mb-4" },
+        h("div", { className: "flex items-center gap-2" },
+          h(Gy, { size: 16, className: "text-blue-500" }),
+          h("h3", { className: "text-sm font-bold text-slate-800" }, "最近录入记录")
+        ),
+        h("span", { className: "text-[10px] text-slate-400 font-bold uppercase tracking-wider bg-slate-100 px-2 py-0.5 rounded-full" },
+          "Recent Activity"
+        )
+      ),
+
+      recentLogs.length === 0 ? h("div", { className: "text-center py-8 border-2 border-dashed border-slate-200/80 rounded-2xl" },
+        h("p", { className: "text-slate-400 text-xs" }, "本会话暂无新提交记录")
+      ) : h("div", { className: "space-y-2.5" },
+        recentLogs.map((log, idx) => {
+          const dateStr = Array.isArray(log) ? log[0] : log.date;
+          const itemStr = Array.isArray(log) ? log[1] : log.item;
+          const incVal = Array.isArray(log) ? parseFloat(log[2] || 0) : parseFloat(log.income || 0);
+          const expVal = Array.isArray(log) ? parseFloat(log[3] || 0) : parseFloat(log.expense || 0);
+
+          return h("div", {
+            key: idx,
+            className: "flex items-center justify-between p-3.5 bg-white hover:bg-slate-50/80 rounded-2xl border border-slate-100 shadow-xs transition-colors"
+          },
+            h("div", { className: "flex flex-col gap-0.5" },
+              h("span", { className: "text-sm font-bold text-slate-800" }, itemStr),
+              h("span", { className: "text-[10px] font-mono text-slate-400" }, dateStr ? String(dateStr).split("T")[0] : "-")
+            ),
+            h("div", { className: "text-right font-mono" },
+              incVal > 0 && h("div", { className: "text-sm font-bold text-emerald-600" }, `+ RM ${incVal.toFixed(2)}`),
+              expVal > 0 && h("div", { className: "text-sm font-bold text-rose-600" }, `- RM ${expVal.toFixed(2)}`)
+            )
+          );
+        })
+      )
+    )
+  );
+}
+
+// ============================================================================
+// Tab 2: 🗄️ 数据库管理 (Database View) (Requirement 2)
+// ============================================================================
+function DatabaseViewTab({ onDataChanged }) {
+  const currentYear = new Date().getFullYear();
+  const [yearFilter, setYearFilter] = useState(String(currentYear));
+  const [monthFilter, setMonthFilter] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [editItem, setEditItem] = useState(null); // transaction to edit
+  const [deleteItem, setDeleteItem] = useState(null); // transaction to delete
+  const [actionLoading, setActionLoading] = useState(false);
+
+  // Fetch transactions from Firestore
+  const fetchTransactions = useCallback(async () => {
+    setLoading(true);
+    try {
+      const payload = { limit: 300 };
+      if (yearFilter !== "all") {
+        payload.year = parseInt(yearFilter, 10);
+      }
+      if (monthFilter !== "all") {
+        payload.month = parseInt(monthFilter, 10);
+      }
+      if (searchQuery.trim()) {
+        payload.search = searchQuery.trim();
+      }
+
+      const { ok, data } = await apiPost("list_transactions", payload);
+      if (ok && data.status === "success" && Array.isArray(data.transactions)) {
+        setTransactions(data.transactions);
+      }
+    } catch (err) {
+      console.error("Failed to load transactions:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [yearFilter, monthFilter, searchQuery]);
+
+  useEffect(() => {
+    fetchTransactions();
+  }, [fetchTransactions]);
+
+  // Client-side instant filter for instantaneous search responsiveness
+  const filteredList = useMemo(() => {
+    let list = transactions;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter((t) =>
+        (t.item && t.item.toLowerCase().includes(q)) ||
+        (t.date && t.date.includes(q)) ||
+        (t.user && t.user.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [transactions, searchQuery]);
+
+  // Handle Update Record
+  const handleUpdate = async (e) => {
+    e.preventDefault();
+    if (!editItem) return;
+
+    setActionLoading(true);
+    try {
+      const inc = parseFloat(editItem.income) || 0;
+      const exp = parseFloat(editItem.expense) || 0;
+      if (inc > 0 && exp > 0) {
+        alert("错误：收入和支出不能同时大于 0。");
+        setActionLoading(false);
+        return;
+      }
+
+      const { ok, data } = await apiPost("update_record", {
+        id: editItem.id,
+        date: editItem.date,
+        item: editItem.item,
+        income: inc,
+        expense: exp
+      });
+
+      if (ok && data.status === "success") {
+        setEditItem(null);
+        onDataChanged(); // Trigger Live CDN Auto-Update Feedback (Requirement 3)
+        fetchTransactions();
+      } else {
+        alert(data.message || "更新失败");
+      }
+    } catch (err) {
+      alert("更新发生错误");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Handle Delete Record
+  const handleDelete = async () => {
+    if (!deleteItem) return;
+
+    setActionLoading(true);
+    try {
+      const { ok, data } = await apiPost("delete_record", {
+        id: deleteItem.id,
+        year: deleteItem.year,
+        month: deleteItem.month,
+        date: deleteItem.date,
+        item: deleteItem.item,
+        income: deleteItem.income,
+        expense: deleteItem.expense
+      });
+
+      if (ok && data.status === "success") {
+        setDeleteItem(null);
+        onDataChanged(); // Trigger Live CDN Auto-Update Feedback (Requirement 3)
+        fetchTransactions();
+      } else {
+        alert(data.message || "删除失败");
+      }
+    } catch (err) {
+      alert("删除发生错误");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  return h("div", { className: "space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300" },
+    // Header & Controls Card
+    h("div", { className: "bg-white/90 backdrop-blur-md rounded-3xl border border-slate-200/80 shadow-md shadow-slate-100 p-5 sm:p-6" },
+      h("div", { className: "flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5 pb-4 border-b border-slate-100" },
+        h("div", { className: "flex items-center gap-3" },
+          h("div", { className: "w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center" },
+            h(DatabaseIcon, { size: 22 })
+          ),
+          h("div", null,
+            h("h2", { className: "text-base font-black text-slate-800" }, "Cloud Firestore 数据库管理"),
+            h("p", { className: "text-xs text-slate-400 mt-0.5" }, "查看与维护全部流水记录，变更将即时自动刷新 CDN 册子")
+          )
+        ),
+
+        // Action toolbar
+        h("div", { className: "flex items-center flex-wrap gap-2.5" },
+          h("span", { className: "px-3 py-1.5 bg-slate-100 text-slate-600 font-bold text-xs rounded-xl border border-slate-200" },
+            `共 ${filteredList.length} 笔记录`
+          ),
+          h("button", {
+            type: "button",
+            onClick: fetchTransactions,
+            disabled: loading,
+            className: "inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all active:scale-95 disabled:opacity-50"
+          },
+            h(RefreshIcon, { size: 14, className: loading ? "animate-spin" : "" }),
+            h("span", null, loading ? "刷新中..." : "刷新数据")
+          )
+        )
+      ),
+
+      // Filters Toolbar
+      h("div", { className: "grid grid-cols-1 sm:grid-cols-12 gap-3" },
+        // Year filter
+        h("div", { className: "sm:col-span-3" },
+          h("label", { className: "block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1 ml-1" }, "年份 Year"),
+          h("select", {
+            value: yearFilter,
+            onChange: (e) => setYearFilter(e.target.value),
+            className: "w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+          },
+            h("option", { value: "all" }, "全部年份 (All Years)"),
+            h("option", { value: "2026" }, "2026 年"),
+            h("option", { value: "2025" }, "2025 年"),
+            h("option", { value: "2024" }, "2024 年")
+          )
+        ),
+
+        // Month filter
+        h("div", { className: "sm:col-span-3" },
+          h("label", { className: "block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1 ml-1" }, "月份 Month"),
+          h("select", {
+            value: monthFilter,
+            onChange: (e) => setMonthFilter(e.target.value),
+            className: "w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+          },
+            h("option", { value: "all" }, "全部月份 (All Months)"),
+            Array.from({ length: 12 }, (_, i) => i + 1).map((m) =>
+              h("option", { key: m, value: String(m) }, `${m} 月 (${m}月)`)
+            )
+          )
+        ),
+
+        // Real-time Search input
+        h("div", { className: "sm:col-span-6" },
+          h("label", { className: "block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1 ml-1" }, "关键词检索 Search"),
+          h("div", { className: "relative" },
+            h("span", { className: "absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" },
+              h(SearchIcon, { size: 15 })
+            ),
+            h("input", {
+              type: "text",
+              value: searchQuery,
+              onChange: (e) => setSearchQuery(e.target.value),
+              placeholder: "搜索事项名称、经手人或日期...",
+              className: "w-full pl-9 pr-8 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+            }),
+            searchQuery && h("button", {
+              type: "button",
+              onClick: () => setSearchQuery(""),
+              className: "absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            },
+              h(XIcon, { size: 14 })
+            )
+          )
+        )
+      )
+    ),
+
+    // Transactions Table Card
+    h("div", { className: "bg-white rounded-3xl border border-slate-200/80 shadow-md shadow-slate-100 overflow-hidden" },
+      loading && transactions.length === 0 ? h("div", { className: "py-20 flex flex-col items-center justify-center text-slate-400 gap-3" },
+        h(Qn, { size: 28, className: "animate-spin text-blue-500" }),
+        h("p", { className: "text-xs font-medium" }, "正在加载 Firestore 数据库记录...")
+      ) : filteredList.length === 0 ? h("div", { className: "py-16 text-center" },
+        h("div", { className: "w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-3" },
+          h(SearchIcon, { size: 20 })
+        ),
+        h("p", { className: "text-sm font-bold text-slate-600" }, "未找到匹配的交易记录"),
+        h("p", { className: "text-xs text-slate-400 mt-1" }, "请尝试调整年份、月份筛选或清空搜索关键词")
+      ) : h("div", { className: "overflow-x-auto" },
+        h("table", { className: "w-full text-left border-collapse text-xs" },
+          h("thead", { className: "bg-slate-50/80 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider text-[11px]" },
+            h("tr", null,
+              h("th", { className: "py-3.5 px-4 font-semibold" }, "日期 (Date)"),
+              h("th", { className: "py-3.5 px-4 font-semibold" }, "事项 (Item)"),
+              h("th", { className: "py-3.5 px-4 font-semibold text-right" }, "收入 (Income)"),
+              h("th", { className: "py-3.5 px-4 font-semibold text-right" }, "支出 (Expense)"),
+              h("th", { className: "py-3.5 px-4 font-semibold text-right" }, "结余 (Balance)"),
+              h("th", { className: "py-3.5 px-4 font-semibold" }, "经手人 (User)"),
+              h("th", { className: "py-3.5 px-4 font-semibold text-center" }, "操作 (Actions)")
+            )
+          ),
+          h("tbody", { className: "divide-y divide-slate-100 font-medium text-slate-700" },
+            filteredList.map((tx) => {
+              const inc = parseFloat(tx.income || 0);
+              const exp = parseFloat(tx.expense || 0);
+              const bal = tx.balance !== undefined && tx.balance !== null ? parseFloat(tx.balance) : null;
+              const dateStr = tx.date ? String(tx.date).split("T")[0] : "-";
+
+              return h("tr", {
+                key: tx.id || `${dateStr}-${tx.item}-${inc}-${exp}`,
+                className: "hover:bg-slate-50/70 transition-colors"
+              },
+                // Date
+                h("td", { className: "py-3 px-4 font-mono font-medium text-slate-600 whitespace-nowrap" },
+                  dateStr
+                ),
+                // Item
+                h("td", { className: "py-3 px-4 font-bold text-slate-800" },
+                  h("span", { className: "inline-block bg-slate-100/70 border border-slate-200/50 px-2 py-0.5 rounded-lg text-xs" },
+                    tx.item || "无事项"
+                  )
+                ),
+                // Income
+                h("td", { className: "py-3 px-4 text-right font-mono font-bold whitespace-nowrap" },
+                  inc > 0 ? h("span", { className: "text-emerald-600" }, `+ RM ${inc.toFixed(2)}`) : h("span", { className: "text-slate-300" }, "-")
+                ),
+                // Expense
+                h("td", { className: "py-3 px-4 text-right font-mono font-bold whitespace-nowrap" },
+                  exp > 0 ? h("span", { className: "text-rose-600" }, `- RM ${exp.toFixed(2)}`) : h("span", { className: "text-slate-300" }, "-")
+                ),
+                // Balance
+                h("td", { className: "py-3 px-4 text-right font-mono font-semibold text-slate-600 whitespace-nowrap" },
+                  bal !== null ? `RM ${bal.toFixed(2)}` : "-"
+                ),
+                // User
+                h("td", { className: "py-3 px-4 whitespace-nowrap text-slate-500" },
+                  h("span", { className: "inline-flex items-center gap-1 text-[11px]" },
+                    h(Jy, { size: 12, className: "text-slate-400" }),
+                    tx.user || "admin"
+                  )
+                ),
+                // Actions
+                h("td", { className: "py-3 px-4 text-center whitespace-nowrap" },
+                  h("div", { className: "inline-flex items-center gap-1.5" },
+                    // Edit Button
+                    h("button", {
+                      type: "button",
+                      onClick: () => setEditItem({ ...tx }),
+                      className: "inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors",
+                      title: "编辑记录"
+                    },
+                      h(EditIcon, { size: 13 }),
+                      "编辑"
+                    ),
+                    // Delete Button
+                    h("button", {
+                      type: "button",
+                      onClick: () => setDeleteItem(tx),
+                      className: "inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-lg transition-colors",
+                      title: "删除记录"
+                    },
+                      h(TrashIcon, { size: 13 }),
+                      "删除"
+                    )
+                  )
+                )
+              );
+            })
+          )
+        )
+      )
+    ),
+
+    // ========================================================================
+    // Edit Modal Dialog
+    // ========================================================================
+    editItem && h("div", { className: "fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200" },
+      h("div", { className: "bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-md w-full p-6 animate-in zoom-in-95 duration-200" },
+        h("div", { className: "flex items-center justify-between pb-3 border-b border-slate-100 mb-4" },
+          h("div", { className: "flex items-center gap-2" },
+            h("div", { className: "w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold" },
+              h(EditIcon, { size: 16 })
+            ),
+            h("h3", { className: "text-base font-black text-slate-800" }, "编辑财务记录")
+          ),
+          h("button", {
+            type: "button",
+            onClick: () => setEditItem(null),
+            className: "text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+          },
+            h(XIcon, { size: 18 })
+          )
+        ),
+
+        h("form", { onSubmit: handleUpdate, className: "space-y-4" },
+          h("div", null,
+            h("label", { className: "block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1" }, "日期 Date"),
+            h("input", {
+              type: "date",
+              required: true,
+              value: editItem.date ? String(editItem.date).split("T")[0] : "",
+              onChange: (e) => setEditItem({ ...editItem, date: e.target.value }),
+              className: "w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-500/20"
+            })
+          ),
+
+          h("div", null,
+            h("label", { className: "block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1" }, "事项说明 Item"),
+            h("input", {
+              type: "text",
+              required: true,
+              value: editItem.item || "",
+              onChange: (e) => setEditItem({ ...editItem, item: e.target.value }),
+              className: "w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-500/20"
+            })
+          ),
+
+          h("div", { className: "grid grid-cols-2 gap-3" },
+            h("div", null,
+              h("label", { className: "block text-[11px] font-bold text-emerald-600 uppercase tracking-wider mb-1" }, "收入 (RM)"),
+              h("input", {
+                type: "number",
+                step: "0.01",
+                value: editItem.income || "",
+                onChange: (e) => setEditItem({ ...editItem, income: e.target.value }),
+                placeholder: "0.00",
+                className: "w-full px-3.5 py-2.5 bg-emerald-50/40 border border-emerald-100 rounded-xl text-xs font-bold text-emerald-700 outline-none focus:ring-2 focus:ring-emerald-500/20"
+              })
+            ),
+            h("div", null,
+              h("label", { className: "block text-[11px] font-bold text-rose-600 uppercase tracking-wider mb-1" }, "支出 (RM)"),
+              h("input", {
+                type: "number",
+                step: "0.01",
+                value: editItem.expense || "",
+                onChange: (e) => setEditItem({ ...editItem, expense: e.target.value }),
+                placeholder: "0.00",
+                className: "w-full px-3.5 py-2.5 bg-rose-50/40 border border-rose-100 rounded-xl text-xs font-bold text-rose-700 outline-none focus:ring-2 focus:ring-rose-500/20"
+              })
+            )
+          ),
+
+          h("div", { className: "pt-2 flex gap-2" },
+            h("button", {
+              type: "button",
+              onClick: () => setEditItem(null),
+              className: "flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all"
+            },
+              "取消"
+            ),
+            h("button", {
+              type: "submit",
+              disabled: actionLoading,
+              className: "flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-500/20 disabled:opacity-50 flex items-center justify-center gap-1.5"
+            },
+              actionLoading && h(Qn, { size: 14, className: "animate-spin" }),
+              "保存修改"
+            )
+          )
+        )
+      )
+    ),
+
+    // ========================================================================
+    // Delete Confirmation Modal Dialog
+    // ========================================================================
+    deleteItem && h("div", { className: "fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200" },
+      h("div", { className: "bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-sm w-full p-6 animate-in zoom-in-95 duration-200" },
+        h("div", { className: "w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto mb-4" },
+          h(TrashIcon, { size: 24 })
+        ),
+        h("h3", { className: "text-base font-black text-slate-800 text-center mb-1" }, "确认删除此笔记录？"),
+        h("p", { className: "text-xs text-slate-500 text-center mb-4 leading-relaxed" },
+          "此操作将永久从 Cloud Firestore 中移除该记录，并自动重新生成公开 CDN 奉献册子。"
+        ),
+
+        // Record preview box
+        h("div", { className: "bg-slate-50 border border-slate-200/70 rounded-2xl p-3.5 mb-5 space-y-1.5 text-xs" },
+          h("div", { className: "flex justify-between text-slate-500" },
+            h("span", null, "日期:"),
+            h("span", { className: "font-mono font-bold text-slate-800" }, deleteItem.date ? String(deleteItem.date).split("T")[0] : "-")
+          ),
+          h("div", { className: "flex justify-between text-slate-500" },
+            h("span", null, "事项:"),
+            h("span", { className: "font-bold text-slate-800" }, deleteItem.item)
+          ),
+          h("div", { className: "flex justify-between text-slate-500" },
+            h("span", null, "金额:"),
+            h("span", { className: `font-mono font-bold ${deleteItem.income > 0 ? "text-emerald-600" : "text-rose-600"}` },
+              deleteItem.income > 0 ? `+ RM ${parseFloat(deleteItem.income).toFixed(2)}` : `- RM ${parseFloat(deleteItem.expense).toFixed(2)}`
+            )
+          )
+        ),
+
+        h("div", { className: "flex gap-2" },
+          h("button", {
+            type: "button",
+            onClick: () => setDeleteItem(null),
+            className: "flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all"
+          },
+            "取消"
+          ),
+          h("button", {
+            type: "button",
+            disabled: actionLoading,
+            onClick: handleDelete,
+            className: "flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-rose-500/20 disabled:opacity-50 flex items-center justify-center gap-1.5"
+          },
+            actionLoading && h(Qn, { size: 14, className: "animate-spin" }),
+            "确认删除"
+          )
+        )
+      )
+    )
+  );
+}
+
+// ============================================================================
+// Tab 3: 📊 年度概览 (Yearly Overview) (Requirement 2)
+// ============================================================================
+function YearlyOverviewTab() {
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [loading, setLoading] = useState(false);
+  const [summary, setSummary] = useState(null);
+
+  const fetchSummary = useCallback(async (year) => {
+    setLoading(true);
+    setSummary(null);
+    try {
+      const { ok, data } = await apiPost("get_yearly_summary", { year });
+      if (ok && data.status === "success" && Array.isArray(data.data)) {
+        setSummary({
+          year,
+          totalIncome: data.totalIncome ?? 0,
+          totalExpense: data.totalExpense ?? 0,
+          balance: data.balance ?? 0,
+          monthlyBreakdown: data.data.map((x) => ({
+            month: x.month,
+            income: x.income || 0,
+            expense: x.expense || 0,
+            balance: x.balance || 0,
+            count: x.count || 0
+          }))
+        });
+      }
+    } catch (err) {
+      console.error("Failed to load yearly summary:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchSummary(selectedYear);
+  }, [selectedYear, fetchSummary]);
+
+  return h("div", { className: "space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300" },
+    // Year Navigation
+    h("div", { className: "flex items-center justify-between max-w-sm mx-auto bg-white/80 backdrop-blur-md p-1.5 rounded-2xl border border-slate-200/80 shadow-xs" },
+      h("button", {
+        type: "button",
+        onClick: () => setSelectedYear((y) => y - 1),
+        className: "p-2 rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+      },
+        h(Ny, { size: 18 })
+      ),
+      h("div", { className: "flex items-baseline gap-1.5 font-black text-slate-800 text-lg tracking-tight" },
+        h("span", null, selectedYear),
+        h("span", { className: "text-xs font-normal text-slate-400" }, "年度总账")
+      ),
+      h("button", {
+        type: "button",
+        onClick: () => setSelectedYear((y) => y + 1),
+        className: "p-2 rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+      },
+        h(Oy, { size: 18 })
+      )
+    ),
+
+    loading ? h("div", { className: "py-24 flex flex-col items-center justify-center text-slate-400 gap-3" },
+      h(Qn, { size: 32, className: "animate-spin text-blue-500" }),
+      h("div", { className: "text-xs font-semibold" }, "正在加载年度汇总数据...")
+    ) : summary ? h("div", { className: "space-y-6" },
+      // 3 Stat Cards
+      h("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-4" },
+        // Balance Card
+        h("div", { className: "relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-xl shadow-slate-200 p-6 flex flex-col justify-between" },
+          h("div", { className: `absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r ${summary.balance >= 0 ? "from-emerald-400 to-teal-400" : "from-rose-400 to-red-500"}` }),
+          h("div", { className: "text-slate-400 text-xs font-bold uppercase tracking-wider mb-1" },
+            "年度累计结余 (Balance)"
+          ),
+          h("div", { className: `text-3xl font-black font-mono tracking-tight my-2 ${summary.balance >= 0 ? "text-emerald-400" : "text-rose-400"}` },
+            `${summary.balance >= 0 ? "+" : ""} RM ${summary.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          ),
+          h("div", { className: "text-[11px] text-slate-400" },
+            "截止当前月份账面滚动结存"
+          )
+        ),
+        // Total Income Card
+        h("div", { className: "rounded-3xl bg-white border border-emerald-100 shadow-md p-6 flex flex-col justify-between" },
+          h("div", { className: "text-xs font-bold text-emerald-600 uppercase tracking-wider mb-1 flex items-center gap-1" },
+            h(Md, { size: 14 }),
+            "年度总收入 (Total Income)"
+          ),
+          h("div", { className: "text-3xl font-black font-mono text-emerald-600 tracking-tight my-2" },
+            `+ RM ${summary.totalIncome.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          ),
+          h("div", { className: "text-[11px] text-slate-400" },
+            "全部月份奉献与收入汇总"
+          )
+        ),
+        // Total Expense Card
+        h("div", { className: "rounded-3xl bg-white border border-rose-100 shadow-md p-6 flex flex-col justify-between" },
+          h("div", { className: "text-xs font-bold text-rose-600 uppercase tracking-wider mb-1 flex items-center gap-1" },
+            h(Od, { size: 14 }),
+            "年度总支出 (Total Expense)"
+          ),
+          h("div", { className: "text-3xl font-black font-mono text-rose-600 tracking-tight my-2" },
+            `- RM ${summary.totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          ),
+          h("div", { className: "text-[11px] text-slate-400" },
+            "全部月份各项事工支出汇总"
+          )
+        )
+      ),
+
+      // Monthly Breakdown Bars
+      h("div", { className: "bg-white rounded-3xl border border-slate-200/80 shadow-md shadow-slate-100 p-6 sm:p-8 space-y-4" },
+        h("div", { className: "flex items-center justify-between pb-3 border-b border-slate-100" },
+          h("h3", { className: "text-sm font-bold text-slate-800" }, "每月收支明细 (Monthly Breakdown)"),
+          h("span", { className: "text-[11px] text-slate-400 font-semibold" }, `单位: RM`)
+        ),
+
+        summary.monthlyBreakdown.filter((m) => m.income > 0 || m.expense > 0).length === 0 ? h("div", { className: "py-12 text-center text-slate-400 text-xs" },
+          "本年度暂无收支记录"
+        ) : h("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-4" },
+          summary.monthlyBreakdown.map((m) => {
+            const maxVal = Math.max(m.income, m.expense, 100);
+            return h("div", {
+              key: m.month,
+              className: "bg-slate-50/70 hover:bg-slate-50 rounded-2xl p-4 border border-slate-100 transition-all space-y-2.5"
+            },
+              h("div", { className: "flex items-center justify-between" },
+                h("div", { className: "flex items-center gap-2" },
+                  h("span", { className: "text-sm font-bold text-slate-800" }, m.month),
+                  m.count > 0 && h("span", { className: "px-2 py-0.5 text-[10px] bg-slate-200/80 text-slate-600 rounded-full font-bold" },
+                    `${m.count} 笔`
+                  )
+                ),
+                h("div", { className: "font-mono text-right" },
+                  m.income > 0 && h("span", { className: "text-xs font-bold text-emerald-600 mr-2" }, `+${m.income.toFixed(2)}`),
+                  m.expense > 0 && h("span", { className: "text-xs font-bold text-rose-600" }, `-${m.expense.toFixed(2)}`),
+                  m.income === 0 && m.expense === 0 && h("span", { className: "text-xs text-slate-400" }, "无变动")
+                )
+              ),
+              // Progress bars
+              h("div", { className: "space-y-1.5" },
+                m.income > 0 && h("div", { className: "h-2 bg-emerald-100/70 rounded-full overflow-hidden" },
+                  h("div", {
+                    className: "h-full bg-emerald-500 rounded-full",
+                    style: { width: `${Math.min(100, (m.income / maxVal) * 100)}%` }
+                  })
+                ),
+                m.expense > 0 && h("div", { className: "h-2 bg-rose-100/70 rounded-full overflow-hidden" },
+                  h("div", {
+                    className: "h-full bg-rose-500 rounded-full",
+                    style: { width: `${Math.min(100, (m.expense / maxVal) * 100)}%` }
+                  })
+                )
+              )
+            );
+          })
+        )
+      )
+    ) : h("div", { className: "text-center py-20 text-slate-400 text-xs" },
+      "暂无数据"
+    )
+  );
+}
+
+// ============================================================================
+// Main Application Container
+// ============================================================================
+function GroupFinanceApp() {
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const u = localStorage.getItem("currentUser");
+      return u ? JSON.parse(u) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [sessionToken, setSessionToken] = useState(() => localStorage.getItem("sessionToken") || "");
+  const [activeTab, setActiveTab] = useState("record-entry"); // record-entry, database-view, yearly-overview
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState(null);
+
+  // Live CDN Auto-Update Toast (Requirement 3)
+  const [toast, setToast] = useState({ show: false, message: "" });
+  const toastTimerRef = useRef(null);
+
+  const showCdnToast = useCallback((msg) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({
+      show: true,
+      message: msg || "已同步至 Cloud Firestore，小组奉献记录 CDN 已自动更新！"
+    });
+    toastTimerRef.current = setTimeout(() => {
+      setToast({ show: false, message: "" });
+    }, 4500);
+  }, []);
+
+  const handleLoginSuccess = (token, user) => {
+    setSessionToken(token);
+    setCurrentUser(user);
+    localStorage.setItem("sessionToken", token);
+    localStorage.setItem("currentUser", JSON.stringify(user));
+    window.dispatchEvent(new Event("storage"));
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("sessionToken");
+    localStorage.removeItem("currentUser");
+    setSessionToken("");
+    setCurrentUser(null);
+    window.dispatchEvent(new Event("storage"));
+  };
+
+  const isAuthenticated = !!(sessionToken && currentUser);
+
+  if (!isAuthenticated) {
+    return h(LoginView, {
+      onLoginSuccess: handleLoginSuccess,
+      isLoading: loginLoading,
+      error: loginError,
+      setError: setLoginError
+    });
+  }
+
+  // Navigation Tab Buttons
+  const navTabs = [
+    { id: "record-entry", label: "📝 记账录入", desc: "Record Entry" },
+    { id: "database-view", label: "🗄️ 数据库管理", desc: "Database View" },
+    { id: "yearly-overview", label: "📊 年度概览", desc: "Yearly Overview" }
+  ];
+
+  return h("div", { className: "min-h-screen bg-slate-50 font-sans text-slate-900 pb-16 relative" },
+    // Live CDN Toast notification (Requirement 3)
+    h(ToastBanner, {
+      toast,
+      onClose: () => setToast({ show: false, message: "" })
+    }),
+
+    // Header & Booklet Link (Requirement 4)
+    h(AppHeader, {
+      currentUser,
+      onLogout: handleLogout
+    }),
+
+    // Main Content
+    h("main", { className: "max-w-6xl mx-auto px-4 pt-6" },
+      // Tab Navigation Bar
+      h("div", { className: "bg-slate-200/60 p-1.5 rounded-2xl mb-7 max-w-xl mx-auto flex gap-1 shadow-inner" },
+        navTabs.map((tab) =>
+          h("button", {
+            key: tab.id,
+            type: "button",
+            onClick: () => setActiveTab(tab.id),
+            className: `relative flex-1 py-3 px-2 text-xs sm:text-sm font-bold transition-all duration-200 rounded-xl flex flex-col sm:flex-row items-center justify-center gap-1 ${activeTab === tab.id ? "text-blue-700 bg-white shadow-sm" : "text-slate-600 hover:text-slate-900 hover:bg-slate-100/60"}`
+          },
+            h("span", null, tab.label),
+            activeTab === tab.id && h("span", { className: "absolute inset-0 rounded-xl border border-blue-200/60 pointer-events-none" })
+          )
+        )
+      ),
+
+      // Tab Content
+      activeTab === "record-entry" && h(RecordEntryTab, {
+        currentUser,
+        onRecordAdded: () => showCdnToast("已同步至 Cloud Firestore，小组奉献记录 CDN 已自动更新！")
+      }),
+
+      activeTab === "database-view" && h(DatabaseViewTab, {
+        onDataChanged: () => showCdnToast("已同步至 Cloud Firestore，小组奉献记录 CDN 已自动更新！")
+      }),
+
+      activeTab === "yearly-overview" && h(YearlyOverviewTab)
+    )
+  );
+}
+
+// ============================================================================
+// Mount Root
+// ============================================================================
+const rootEl = document.getElementById("root");
+if (rootEl) {
+  const root = hy.createRoot(rootEl);
+  root.render(h(fy.StrictMode, null, h(GroupFinanceApp)));
+}
