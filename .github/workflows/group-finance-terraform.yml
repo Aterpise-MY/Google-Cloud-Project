@@ -5,12 +5,14 @@ on:
     branches:
       - main
     paths:
+      - '**/terraform/**'
       - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/terraform/**'
       - '.github/workflows/group-finance-terraform.yml'
   push:
     branches:
       - main
     paths:
+      - '**/terraform/**'
       - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/terraform/**'
       - 'terraform/**'
       - '.github/workflows/group-finance-terraform.yml'
