@@ -762,5 +762,223 @@ class BookletAuthTests(unittest.TestCase):
         self.assertIn('value="&quot;&gt;&lt;script&gt;x&lt;/script&gt;"', body)
 
 
+class FirestoreAndAdminTests(unittest.TestCase):
+    def setUp(self):
+        from ledger_pipeline.firestore_db import FirestoreLedgerDB
+        self.db = FirestoreLedgerDB()
+
+    def test_admin_user_verification(self):
+        self.assertFalse(self.db.is_admin_user("admin@groupfinance.com"))
+        user = self.db.add_admin_user("admin@groupfinance.com", name="Lead Admin")
+        self.assertEqual(user["role"], "admin")
+        self.assertEqual(user["status"], "active")
+        self.assertTrue(self.db.is_admin_user("admin@groupfinance.com"))
+        # Case insensitive & whitespace trimmed
+        self.assertTrue(self.db.is_admin_user(" ADMIN@GROUPFINANCE.COM "))
+        # Inactive user
+        inactive = self.db.add_admin_user("inactive@groupfinance.com")
+        inactive["status"] = "inactive"
+        self.assertFalse(self.db.is_admin_user("inactive@groupfinance.com"))
+        # Empty email
+        self.assertFalse(self.db.is_admin_user(""))
+
+    def test_firestore_crud_transactions(self):
+        t1 = self.db.add_transaction(date_str="2026-08-13", item="奉献", income=100.0, expense=0.0, balance=598.0)
+        t2 = self.db.add_transaction(date_str="2026-08-14", item="茶点支出", income=0.0, expense=25.0, balance=573.0)
+        t3 = self.db.add_transaction(date_str="2026-09-01", item="九月奉献", income=50.0, expense=0.0, balance=623.0)
+
+        # Query all
+        all_txs = self.db.query_transactions(limit=None)
+        self.assertEqual(len(all_txs), 3)
+        self.assertTrue(all("id" in tx for tx in all_txs))
+        self.assertEqual(all_txs[0]["item"], "奉献")
+
+        # Query by month
+        aug_txs = self.db.query_transactions(year=2026, month=8)
+        self.assertEqual(len(aug_txs), 2)
+
+        # Query by search
+        search_txs = self.db.query_transactions(search="茶点")
+        self.assertEqual(len(search_txs), 1)
+        self.assertEqual(search_txs[0]["expense"], 25.0)
+
+        # Update
+        tx_id = t2["id"]
+        updated = self.db.update_transaction(tx_id, {"item": "更新后的茶点", "expense": 30.0})
+        self.assertTrue(updated)
+        refreshed = self.db.query_transactions(search="更新后的茶点")
+        self.assertEqual(len(refreshed), 1)
+        self.assertEqual(refreshed[0]["expense"], 30.0)
+
+        # Delete by id
+        deleted = self.db.delete_transaction_by_id(tx_id)
+        self.assertTrue(deleted)
+        self.assertEqual(len(self.db.query_transactions(limit=None)), 2)
+
+    def test_firestore_source(self):
+        from ledger_pipeline.sources import FirestoreSource
+        self.db.add_transaction(date_str="2026-08-13", item="小组", income=90.0, expense=0.0, balance=588.0)
+        self.db.add_transaction(date_str="2026-09-07", item="茶点", income=0.0, expense=50.0, balance=538.0)
+        self.db.add_transaction(date_str="2026-09-09", item="小组", income=120.0, expense=0.0, balance=658.0)
+
+        source = FirestoreSource(self.db, opening_balance=498)
+        sheets = source.load()
+
+        self.assertIn("Aug 2026", sheets)
+        self.assertIn("Sep 2026", sheets)
+
+        aug = sheets["Aug 2026"]
+        self.assertEqual(aug.group_id, "YA5")
+        self.assertEqual(aug.workers, "Rivaldo, Brendon")
+        self.assertEqual(aug.e5, 498.0)
+        self.assertEqual(len(aug.rows), 1)
+
+        sep = sheets["Sep 2026"]
+        # Sep e5 is the previous month closing (498 + 90 = 588)
+        self.assertEqual(sep.e5, 588.0)
+        self.assertEqual(len(sep.rows), 2)
+
+        ms = build_months(sheets, upto=(2026, 9))
+        self.assertEqual(ms[(2026, 8)].closing, 588)
+        self.assertEqual(ms[(2026, 9)].closing, 658)
+
+    def test_api_google_login(self):
+        from ledger_pipeline.service import create_app
+        s = Settings(pipeline_token="test-secret")
+        app = create_app(s, db=self.db)
+        c = app.test_client()
+
+        # Missing credential
+        r = c.post("/api", json={"action": "google_login"})
+        self.assertEqual(r.status_code, 400)
+
+        # Non-admin user gets 403
+        r = c.post("/api", json={"action": "google_login", "credential": "test-admin-token",
+                                 "email": "unauthorized@example.com"})
+        self.assertEqual(r.status_code, 403)
+
+        # Seed admin user
+        self.db.add_admin_user("admin@groupfinance.com", name="Admin User")
+        r = c.post("/api", json={"action": "google_login", "credential": "test-admin-token",
+                                 "email": "admin@groupfinance.com"})
+        self.assertEqual(r.status_code, 200)
+        data = r.get_json()
+        self.assertEqual(data["status"], "success")
+        self.assertTrue(data["token"].startswith("session-"))
+        self.assertEqual(data["user"]["email"], "admin@groupfinance.com")
+        self.assertEqual(data["user"]["role"], "admin")
+        self.assertIn("admin_auth=", r.headers.get("Set-Cookie", ""))
+
+    def test_api_list_update_delete_autopublish(self):
+        from ledger_pipeline.service import create_app
+        with tempfile.TemporaryDirectory() as td:
+            s = Settings(pipeline_token="test-secret", page_cache_seconds=60)
+            from ledger_pipeline.sources import FirestoreSource
+            source = FirestoreSource(self.db, opening_balance=693)
+            storage = LocalStorage(td)
+            p = Pipeline(s, source, storage, pdf=lambda h: h.encode("utf-8"), invalidate=lambda: None)
+            app = create_app(s, pipeline=p, db=self.db)
+            c = app.test_client()
+
+            # Add record
+            r1 = c.post("/api", json={
+                "action": "add_record",
+                "date": "2026-10-15",
+                "item": "Test Offering",
+                "income": 200.0,
+                "expense": 0.0,
+            })
+            self.assertEqual(r1.status_code, 200)
+
+            # List transactions
+            r2 = c.post("/api", json={"action": "list_transactions", "year": 2026, "month": 10})
+            self.assertEqual(r2.status_code, 200)
+            txs = r2.get_json().get("transactions", [])
+            self.assertEqual(len(txs), 1)
+            tx_id = txs[0]["id"]
+            self.assertEqual(txs[0]["item"], "Test Offering")
+
+            # Update record
+            r3 = c.post("/api", json={
+                "action": "update_record",
+                "id": tx_id,
+                "item": "Updated Offering",
+                "income": 250.0,
+            })
+            self.assertEqual(r3.status_code, 200)
+
+            # Verify update reflected in list
+            r4 = c.post("/api", json={"action": "list_transactions", "search": "Updated"})
+            self.assertEqual(len(r4.get_json()["transactions"]), 1)
+            self.assertEqual(r4.get_json()["transactions"][0]["income"], 250.0)
+
+            # Delete record
+            r5 = c.post("/api", json={"action": "delete_record", "id": tx_id})
+            self.assertEqual(r5.status_code, 200)
+            r6 = c.post("/api", json={"action": "list_transactions"})
+            self.assertEqual(len(r6.get_json()["transactions"]), 0)
+
+            # Verify storage has published files
+            self.assertTrue(storage.exists("index.html"))
+
+    def test_booklet_admin_auth_cookie(self):
+        from ledger_pipeline.service import create_app
+        from ledger_pipeline.sources import FirestoreSource
+        with tempfile.TemporaryDirectory() as td:
+            s = Settings(pipeline_token="test-secret", booklet_password="configured-pw")
+            source = FirestoreSource(self.db, opening_balance=693)
+            storage = LocalStorage(td)
+            p = Pipeline(s, source, storage, pdf=lambda h: h.encode("utf-8"), invalidate=lambda: None)
+            app = create_app(s, pipeline=p, db=self.db)
+            c = app.test_client()
+
+            # Unauthenticated GET /booklet returns login HTML
+            r_unauth = c.get("/booklet")
+            self.assertIn("请输入授权账号与密码", r_unauth.get_data(as_text=True))
+
+            # Authenticated via admin_auth cookie
+            c.set_cookie("admin_auth", "session-test-token-12345")
+            r_auth = c.get("/booklet")
+            self.assertNotEqual(r_auth.status_code, 401)
+            self.assertNotIn("请输入授权账号与密码", r_auth.get_data(as_text=True))
+
+            # Authenticated via Bearer token
+            c.delete_cookie("admin_auth")
+            r_bearer = c.get("/booklet", headers={"Authorization": "Bearer session-test-bearer-12345"})
+            self.assertNotIn("请输入授权账号与密码", r_bearer.get_data(as_text=True))
+
+    def test_migration_script(self):
+        import openpyxl
+        from scripts.migrate_xlsx_to_firestore import extract_transactions_from_workbook, migrate_xlsx_to_firestore
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "test_wb.xlsx")
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Aug 2026"
+            ws["B1"] = "YA5"
+            ws["B2"] = "Rivaldo, Brendon"
+            ws["E5"] = 498
+            ws.cell(6, 1, "2026-08-13")
+            ws.cell(6, 2, "小组奉献")
+            ws.cell(6, 3, 90)
+            ws.cell(6, 4, 0)
+            ws.cell(6, 5, 588)
+            wb.save(path)
+
+            txs = extract_transactions_from_workbook(path)
+            self.assertEqual(len(txs), 1)
+            self.assertEqual(txs[0]["item"], "小组奉献")
+            self.assertEqual(txs[0]["income"], 90.0)
+
+            res = migrate_xlsx_to_firestore(path, db=self.db)
+            self.assertEqual(res["status"], "ok")
+            self.assertEqual(res["transactions_migrated"], 1)
+            queried = self.db.query_transactions(year=2026, month=8)
+            self.assertEqual(len(queried), 1)
+            self.assertEqual(queried[0]["item"], "小组奉献")
+
+
+
 if __name__ == "__main__":
     unittest.main()
+
