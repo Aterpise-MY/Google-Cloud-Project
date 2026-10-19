@@ -6,8 +6,8 @@
     "stack": "Python 3.14, Flask, Google Cloud Run, Cloud Firestore, Cloud Storage, Cloud CDN, Google Apps Script, React 19, Tailwind CSS"
   },
   "commands": {
-    "dev": "PYTHONPATH=\"Group Finance/pipeline\" PORT=8000 \"Group Finance/pipeline/.venv/bin/python\" -m ledger_pipeline.service",
-    "test": "\"Group Finance/pipeline/.venv/bin/pytest\" \"Group Finance/pipeline/tests\"",
+    "dev": "PYTHONPATH=\"Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline\" PORT=8000 \"Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/.venv/bin/python\" -m ledger_pipeline.service",
+    "test": "\"Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/.venv/bin/pytest\" \"Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/tests\"",
     "testSingle": "",
     "build": "",
     "worktreeSetup": []

@@ -1,6 +1,6 @@
 """Render the daily and weekly messages from sample MYR rows. No network, no credentials.
 
-    python3 "GCP FinOps/preview.py"
+    python3 "GCP FinOps (Cloud Functions + BigQuery + Telegram)/preview.py"
 
 The messages are the exact HTML that would be sent to Telegram; they go through
 the same report.handle_payload() path as production, with fakes for I/O.

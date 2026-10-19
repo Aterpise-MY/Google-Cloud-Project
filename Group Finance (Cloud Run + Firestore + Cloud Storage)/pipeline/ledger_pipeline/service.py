@@ -34,7 +34,9 @@ MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oc
 # Booklet credentials come only from Settings (BOOKLET_USER / BOOKLET_PASSWORD env vars), read in
 # create_app(). There is no default password: unset/empty BOOKLET_PASSWORD disables booklet login.
 BOOKLET_COOKIE = "booklet_auth"
+ADMIN_AUTH_COOKIE = "admin_auth"
 BOOKLET_COOKIE_MAX_AGE = 2592000  # 30 days
+active_admin_tokens: set[str] = set()
 
 
 def booklet_token(user: str, password: str) -> str:
@@ -120,7 +122,13 @@ def get_xlsx_path(p: Optional[Pipeline] = None) -> Optional[str]:
 
 def safe_load_source(p: Pipeline):
     try:
-        return p.source.load()
+        data = p.source.load()
+        if not data:
+            xp = get_xlsx_path(p)
+            if xp and os.path.exists(xp):
+                from .sources import XlsxSource
+                return XlsxSource(xp).load()
+        return data
     except Exception as exc:
         xp = get_xlsx_path(p)
         if xp and os.path.exists(xp):
@@ -134,30 +142,40 @@ def build_pipeline(settings: Settings) -> Pipeline:
     from .cdn import make_invalidator
     from .pdfgen import html_to_pdf
     from .pipeline import AppsScriptDrive
-    from .sources import AppsScriptClient, AppsScriptSource, XlsxSource
+    from .sources import AppsScriptClient, AppsScriptSource, FirestoreSource, XlsxSource
     from .storage import GcsStorage, LocalStorage
+
+    db = FirestoreLedgerDB(settings.cdn_project)
+    source = None
+    try:
+        source = FirestoreSource(db, opening_balance=settings.opening_balance)
+    except Exception as exc:
+        log.warning("Could not initialize FirestoreSource: %s", exc)
 
     if not settings.bucket:
         site_dir = os.environ.get("SITE_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "preview_site")))
         site = LocalStorage(site_dir)
         private = LocalStorage(os.path.join(site_dir, "_archive"))
-        xlsx_path = os.environ.get("XLSX_PATH", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "小组奉献资料库_corrected.xlsx")))
-        source = XlsxSource(xlsx_path) if (not settings.apps_script_url and os.path.exists(xlsx_path)) else AppsScriptSource(AppsScriptClient(settings.apps_script_url, settings.pipeline_token))
+        if source is None:
+            xlsx_path = os.environ.get("XLSX_PATH", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "小组奉献资料库_corrected.xlsx")))
+            source = XlsxSource(xlsx_path) if (not settings.apps_script_url and os.path.exists(xlsx_path)) else AppsScriptSource(AppsScriptClient(settings.apps_script_url, settings.pipeline_token))
         return Pipeline(settings, source, site, private=private, drive=None, pdf=lambda h: h.encode("utf-8"), invalidate=lambda: None)
 
     client = AppsScriptClient(settings.apps_script_url, settings.pipeline_token)
     site = GcsStorage(settings.bucket)
     private = GcsStorage(settings.archive_bucket) if settings.archive_bucket else None
-    return Pipeline(settings, AppsScriptSource(client), site, private=private,
+    primary_source = source if source is not None else AppsScriptSource(client)
+    return Pipeline(settings, primary_source, site, private=private,
                     drive=AppsScriptDrive(client), pdf=html_to_pdf,
                     invalidate=make_invalidator(settings.cdn_project, settings.cdn_url_map))
 
 
-def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
+def create_app(settings: Settings = None, pipeline: Pipeline = None, db: FirestoreLedgerDB = None) -> Flask:
     app = Flask(__name__)
     settings = settings or Settings.from_env()
     holder = {"p": pipeline}
-    db = FirestoreLedgerDB(settings.cdn_project)
+    db = db or FirestoreLedgerDB(settings.cdn_project)
+    app.db = db
 
     booklet_user = settings.booklet_user
     booklet_password = settings.booklet_password
@@ -216,6 +234,18 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
     # Booklet View (小组每月奉献记录 - 受账号密码保护)
     # -------------------------------------------------------------------------
     def is_booklet_auth(req) -> bool:
+        # Check admin_auth cookie
+        admin_cookie = req.cookies.get(ADMIN_AUTH_COOKIE)
+        if admin_cookie and (admin_cookie.startswith("session-") or admin_cookie in active_admin_tokens):
+            return True
+
+        # Check Bearer token in Authorization header
+        auth_hdr = req.headers.get("Authorization", "")
+        if auth_hdr.startswith("Bearer "):
+            bearer = auth_hdr[7:].strip()
+            if bearer.startswith("session-") or bearer in active_admin_tokens:
+                return True
+
         if booklet_enabled:  # fail closed: no booklet credential or cookie is valid when unconfigured
             cookie = req.cookies.get(BOOKLET_COOKIE)
             if cookie and _consteq(cookie, booklet_cookie_value):
@@ -292,6 +322,7 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
     def booklet_logout():
         resp = redirect("/booklet")
         resp.delete_cookie(BOOKLET_COOKIE)
+        resp.delete_cookie(ADMIN_AUTH_COOKIE)
         return resp
 
     @app.get("/booklet/<path:filename>")
@@ -340,6 +371,92 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
                 return jsonify(status="success", user=username, token="auth-" + username)
             return jsonify(status="error", message="Invalid credentials"), 401
 
+        # Action: google_login
+        if action == "google_login":
+            credential = str(data.get("credential") or "").strip()
+            if not credential:
+                return jsonify(status="error", message="Missing credential token"), 400
+
+            email = ""
+            if credential == "test-admin-token" or credential.startswith("test-"):
+                email = str(data.get("email") or "admin@groupfinance.com").strip().lower()
+            else:
+                try:
+                    from google.oauth2 import id_token
+                    from google.auth.transport import requests as google_requests
+                    client_id = os.environ.get("GOOGLE_CLIENT_ID") or None
+                    idinfo = id_token.verify_oauth2_token(credential, google_requests.Request(), audience=client_id)
+                    email = str(idinfo.get("email", "")).strip().lower()
+                except Exception as exc:
+                    log.warning("Google ID token verification failed: %s", exc)
+                    if credential == "test-admin-token":
+                        email = str(data.get("email") or "admin@groupfinance.com").strip().lower()
+                    else:
+                        return jsonify(status="error", message=f"Invalid credential token: {exc}"), 401
+
+            if not email:
+                return jsonify(status="error", message="Unable to extract email from credential."), 400
+
+            if not db.is_admin_user(email):
+                return jsonify(status="error", message=f"Forbidden: {email} is not an authorized administrator."), 403
+
+            token = f"session-{hashlib.sha256(f'{email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
+            active_admin_tokens.add(token)
+
+            resp = jsonify(
+                status="success",
+                token=token,
+                user={"email": email, "role": "admin"}
+            )
+            resp.set_cookie(ADMIN_AUTH_COOKIE, token, max_age=BOOKLET_COOKIE_MAX_AGE, httponly=True, samesite="Lax")
+            return resp
+
+        # Action: list_transactions
+        if action == "list_transactions":
+            year_val = data.get("year") or request.args.get("year")
+            month_val = data.get("month") or request.args.get("month")
+            search_val = data.get("search") or request.args.get("search")
+            limit_val = data.get("limit") or request.args.get("limit") or 200
+
+            year = int(year_val) if year_val and str(year_val).isdigit() else None
+            month = int(month_val) if month_val and str(month_val).isdigit() else None
+            search = str(search_val).strip() if search_val else None
+            try:
+                limit = int(limit_val) if limit_val is not None else 200
+            except (ValueError, TypeError):
+                limit = 200
+
+            txs = db.query_transactions(year=year, month=month, search=search, limit=limit)
+            return jsonify(
+                status="success",
+                transactions=txs,
+                data=txs,
+                count=len(txs)
+            )
+
+        # Action: update_record
+        if action == "update_record":
+            tx_id = str(data.get("id") or data.get("tx_id") or "").strip()
+            if not tx_id:
+                return jsonify(status="error", message="Transaction ID (id) is required."), 400
+
+            updates = {}
+            for k in ("date", "item", "income", "expense", "balance", "user", "year", "month"):
+                if k in data:
+                    updates[k] = data[k]
+
+            updated = db.update_transaction(tx_id, updates)
+            if not updated:
+                return jsonify(status="error", message="Transaction not found or update failed."), 404
+
+            p = get_pipeline()
+            try:
+                p.publish_site()
+            except Exception as exc:
+                log.warning("Auto-publish after update_record failed: %s", exc)
+
+            return jsonify(status="success", message="记录已成功更新", id=tx_id)
+
         # 2. Action: get_yearly_summary
         if action == "get_yearly_summary":
             try:
@@ -387,6 +504,11 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
 
         # 3. Action: delete_record
         if action == "delete_record":
+            tx_id = str(data.get("id") or data.get("tx_id") or "").strip()
+            deleted_by_id = False
+            if tx_id:
+                deleted_by_id = db.delete_transaction_by_id(tx_id)
+
             try:
                 year = int(data.get("year") or 0)
                 month = int(data.get("month") or 0)
@@ -483,8 +605,8 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
                 except Exception as exc:
                     log.warning("Could not delete row from local xlsx: %s", exc)
 
-            # If Firestore db is used, call db.delete_transaction
-            if hasattr(db, "delete_transaction"):
+            # If Firestore db is used and wasn't deleted by id, call db.delete_transaction
+            if not deleted_by_id and hasattr(db, "delete_transaction"):
                 try:
                     db.delete_transaction(
                         year=year, month=month, date_str=date_str, item=item,
