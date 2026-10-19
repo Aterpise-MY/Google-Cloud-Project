@@ -170,11 +170,12 @@ def build_pipeline(settings: Settings) -> Pipeline:
                     invalidate=make_invalidator(settings.cdn_project, settings.cdn_url_map))
 
 
-def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
+def create_app(settings: Settings = None, pipeline: Pipeline = None, db: FirestoreLedgerDB = None) -> Flask:
     app = Flask(__name__)
     settings = settings or Settings.from_env()
     holder = {"p": pipeline}
-    db = FirestoreLedgerDB(settings.cdn_project)
+    db = db or FirestoreLedgerDB(settings.cdn_project)
+    app.db = db
 
     booklet_user = settings.booklet_user
     booklet_password = settings.booklet_password
@@ -602,8 +603,8 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None) -> Flask:
                 except Exception as exc:
                     log.warning("Could not delete row from local xlsx: %s", exc)
 
-            # If Firestore db is used, call db.delete_transaction
-            if hasattr(db, "delete_transaction"):
+            # If Firestore db is used and wasn't deleted by id, call db.delete_transaction
+            if not deleted_by_id and hasattr(db, "delete_transaction"):
                 try:
                     db.delete_transaction(
                         year=year, month=month, date_str=date_str, item=item,
