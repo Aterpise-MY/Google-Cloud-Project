@@ -13,7 +13,7 @@ log = logging.getLogger("ledger.pipeline")
 from .config import Settings
 from .ledger import YM, Month, build_months, last_day_of_month
 from .render import render_all_months_html, render_month_html
-from .sources import AppsScriptClient, Source
+from .sources import Source
 from .storage import Storage
 
 HTML = "text/html; charset=utf-8"
@@ -34,19 +34,6 @@ def parse_ym(s: str) -> YM:
 
 def pdf_filename(ym: YM) -> str:
     return f"小组奉献记录_{ym_key(ym)}.pdf"
-
-
-class AppsScriptDrive:
-    """Saves files into the user's Google Drive via the Apps Script web app (runs as the
-    owner, so no service-account quota problem on a personal Drive)."""
-
-    def __init__(self, client: AppsScriptClient):
-        self.client = client
-
-    def save_pdf(self, filename: str, pdf: bytes) -> dict:
-        res = self.client.call("save_pdf", filename=filename,
-                               content_b64=base64.b64encode(pdf).decode("ascii"))
-        return {"id": res.get("id"), "url": res.get("url"), "folder": res.get("folder")}
 
 
 class Pipeline:
@@ -92,9 +79,23 @@ class Pipeline:
                 raise
         return build_months(raw, upto=upto, opening_balance=self.s.opening_balance)
 
+    def _verify_meta(self) -> Tuple[str, str]:
+        vb, vn = self.s.verify_by, self.s.verify_name
+        db = getattr(self.source, "db", None)
+        if db is not None and hasattr(db, "get_app_settings"):
+            try:
+                cfg = db.get_app_settings()
+                bk = (cfg.get("booklet") if isinstance(cfg, dict) else None) or {}
+                vb = bk.get("verify_by") or vb
+                vn = bk.get("verify_name") or vn
+            except Exception:
+                pass
+        return vb, vn
+
     def _render(self, month: Month, closed: bool, nav=(), generated_at="", show_nav=True) -> str:
-        return render_month_html(month, closed=closed, verify_by=self.s.verify_by,
-                                 verify_name=self.s.verify_name, nav=nav,
+        vb, vn = self._verify_meta()
+        return render_month_html(month, closed=closed, verify_by=vb,
+                                 verify_name=vn, nav=nav,
                                  generated_at=generated_at, show_nav=show_nav)
 
     # -- sync ------------------------------------------------------------
@@ -131,9 +132,10 @@ class Pipeline:
             written.append(ym_key(ym))
 
         # index.html renders all month forms stacked vertically from top to bottom
+        vb, vn = self._verify_meta()
         index_html = render_all_months_html(
             months, current_ym=cur, closed_map=closed_map,
-            verify_by=self.s.verify_by, verify_name=self.s.verify_name,
+            verify_by=vb, verify_name=vn,
             generated_at=stamp
         ).encode("utf-8")
         self.storage.put("index.html", index_html, HTML, self._cache())

@@ -2,7 +2,6 @@
 .venv
 tests/
 scripts/
-apps_script/
 deploy/
 __pycache__/
 *.pyc

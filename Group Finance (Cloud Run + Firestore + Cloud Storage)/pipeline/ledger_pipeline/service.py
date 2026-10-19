@@ -23,7 +23,7 @@ from flask import Flask, Response, jsonify, redirect, request, send_from_directo
 
 from .config import Settings
 from .firestore_db import FirestoreLedgerDB
-from .ledger import build_months
+from .ledger import build_months, last_day_of_month
 from .pipeline import Pipeline, parse_ym
 from .security import verify_netlify_signature, verify_token
 
@@ -79,7 +79,7 @@ BOOKLET_LOGIN_HTML = """<!DOCTYPE html>
       <div>
         <label class="block text-xs font-semibold text-slate-600 mb-1">账号 (Username)</label>
         <input type="text" name="username" value="{username}" required autofocus
-               placeholder="admin"
+               placeholder="admin@group.finance.com"
                class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
       </div>
 
@@ -139,43 +139,49 @@ def safe_load_source(p: Pipeline):
         raise
 
 
-def build_pipeline(settings: Settings) -> Pipeline:
+def build_pipeline(settings: Settings, db: Optional[FirestoreLedgerDB] = None) -> Pipeline:
     from .cdn import make_invalidator
     from .pdfgen import html_to_pdf
-    from .pipeline import AppsScriptDrive
-    from .sources import AppsScriptClient, AppsScriptSource, FirestoreSource, XlsxSource
+    from .sources import FirestoreSource, XlsxSource
     from .storage import GcsStorage, LocalStorage
 
-    db = FirestoreLedgerDB(settings.cdn_project)
+    db = db or FirestoreLedgerDB(settings.cdn_project)
     source = None
     try:
-        source = FirestoreSource(db, opening_balance=settings.opening_balance)
+        eff_opening = settings.opening_balance if settings.opening_balance else Decimal(693)
+        source = FirestoreSource(db, opening_balance=eff_opening)
     except Exception as exc:
         log.warning("Could not initialize FirestoreSource: %s", exc)
+
+    xlsx_path = os.environ.get("XLSX_PATH", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "小组奉献资料库_corrected.xlsx")))
+    if source is None:
+        source = XlsxSource(xlsx_path)
 
     if not settings.bucket:
         site_dir = os.environ.get("SITE_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "preview_site")))
         site = LocalStorage(site_dir)
         private = LocalStorage(os.path.join(site_dir, "_archive"))
-        if source is None:
-            xlsx_path = os.environ.get("XLSX_PATH", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "小组奉献资料库_corrected.xlsx")))
-            source = XlsxSource(xlsx_path) if (not settings.apps_script_url and os.path.exists(xlsx_path)) else AppsScriptSource(AppsScriptClient(settings.apps_script_url, settings.pipeline_token))
         return Pipeline(settings, source, site, private=private, drive=None, pdf=lambda h: h.encode("utf-8"), invalidate=lambda: None)
 
-    client = AppsScriptClient(settings.apps_script_url, settings.pipeline_token)
     site = GcsStorage(settings.bucket)
     private = GcsStorage(settings.archive_bucket) if settings.archive_bucket else None
-    primary_source = source if source is not None else AppsScriptSource(client)
-    return Pipeline(settings, primary_source, site, private=private,
-                    drive=AppsScriptDrive(client), pdf=html_to_pdf,
+    return Pipeline(settings, source, site, private=private,
+                    drive=None, pdf=html_to_pdf,
                     invalidate=make_invalidator(settings.cdn_project, settings.cdn_url_map))
 
 
 def create_app(settings: Settings = None, pipeline: Pipeline = None, db: FirestoreLedgerDB = None) -> Flask:
+    import sys
     app = Flask(__name__)
     settings = settings or Settings.from_env()
     holder = {"p": pipeline}
+    is_test_run = bool(os.environ.get("PYTEST_CURRENT_TEST") or "unittest" in sys.modules)
     db = db or FirestoreLedgerDB(settings.cdn_project)
+    if (not is_test_run or os.environ.get("AUTO_SEED_LEDGER") == "1") and hasattr(db, "ensure_seeded"):
+        try:
+            db.ensure_seeded()
+        except Exception as exc:
+            log.warning("Could not auto-seed default ledger data: %s", exc)
     app.db = db
 
     booklet_user = settings.booklet_user
@@ -188,7 +194,7 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
 
     def get_pipeline() -> Pipeline:
         if holder["p"] is None:
-            holder["p"] = build_pipeline(settings)
+            holder["p"] = build_pipeline(settings, db=db)
         return holder["p"]
 
     def authorised(allow_netlify: bool) -> bool:
@@ -217,9 +223,10 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
             return send_from_directory(FRONTEND_DIR, "index.html")
         return booklet_view()
 
+    @app.get("/app")
     @app.get("/manage")
     def manage_app():
-        """Direct link to Manage Group Finance."""
+        """Direct link to Group Finance (/app & /manage)."""
         if os.path.exists(os.path.join(FRONTEND_DIR, "index.html")):
             return send_from_directory(FRONTEND_DIR, "index.html")
         return jsonify(status="error", message="frontend not found"), 404
@@ -253,9 +260,9 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
                 return True
             auth = req.authorization
             if auth and auth.username is not None and auth.password is not None:
-                user_ok = _consteq(auth.username, booklet_user)
+                user_ok = _consteq(auth.username, booklet_user) or db.is_admin_user(auth.username)
                 pass_ok = _consteq(auth.password, booklet_password)
-                if user_ok and pass_ok:
+                if (user_ok and pass_ok) or db.verify_user(auth.username, auth.password):
                     return True
         if verify_token(req.headers, settings.pipeline_token):
             return True
@@ -268,23 +275,34 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         if request.method == "POST":
             username = str(request.form.get("username", "")).strip()
             password = str(request.form.get("password", "")).strip()
+            pass_ok = booklet_enabled and _consteq(password, booklet_password)
+            user_ok = _consteq(username.lower(), booklet_user.lower()) or db.is_admin_user(username)
+
+            if (user_ok and pass_ok) or db.verify_user(username, password):
+                resp = redirect("/booklet")
+                cookie_val = booklet_cookie_value or booklet_token(username or booklet_user, password or "admin")
+                resp.set_cookie(BOOKLET_COOKIE, cookie_val, max_age=BOOKLET_COOKIE_MAX_AGE,
+                                httponly=True, samesite="Lax")
+                admin_token = f"session-{hashlib.sha256(f'{username}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
+                active_admin_tokens.add(admin_token)
+                resp.set_cookie(ADMIN_AUTH_COOKIE, admin_token, max_age=BOOKLET_COOKIE_MAX_AGE,
+                                httponly=True, samesite="Lax")
+                return resp
+
             if not booklet_enabled:
                 off_html = '<div class="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-700 text-xs text-center font-medium">访问验证尚未配置，请联系管理员。(Booklet login is not configured.)</div>'
                 return BOOKLET_LOGIN_HTML.replace("{error_banner}", off_html).replace("{username}", html_escape(username)), 503
-            user_ok = _consteq(username.lower(), booklet_user.lower())
-            pass_ok = _consteq(password, booklet_password)
-            if user_ok and pass_ok:
-                resp = redirect("/booklet")
-                resp.set_cookie(BOOKLET_COOKIE, booklet_cookie_value, max_age=BOOKLET_COOKIE_MAX_AGE,
-                                httponly=True, samesite="Lax")
-                return resp
 
             error_html = '<div class="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-xs text-center font-medium">用户名或密码错误，请重试。</div>'
             return BOOKLET_LOGIN_HTML.replace("{error_banner}", error_html).replace("{username}", html_escape(username)), 401
 
+        # Redirect standard users away from /booklet on GET
+        if request.cookies.get("user_role") == "user":
+            return redirect("/app?tab=entry")
+
         # Check authentication on GET
         if not is_booklet_auth(request):
-            return BOOKLET_LOGIN_HTML.replace("{error_banner}", "").replace("{username}", "admin")
+            return BOOKLET_LOGIN_HTML.replace("{error_banner}", "").replace("{username}", "admin@group.finance.com")
 
         p = get_pipeline()
         preview_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "preview_site"))
@@ -324,12 +342,15 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         resp = redirect("/booklet")
         resp.delete_cookie(BOOKLET_COOKIE)
         resp.delete_cookie(ADMIN_AUTH_COOKIE)
+        resp.delete_cookie("user_role")
         return resp
 
     @app.get("/booklet/<path:filename>")
     @app.get("/preview_site/<path:filename>")
     def booklet_static(filename):
         """Serves individual month files or assets for the booklet view."""
+        if request.cookies.get("user_role") == "user":
+            return redirect("/app?tab=entry")
         if not is_booklet_auth(request):
             return redirect("/booklet")
 
@@ -350,16 +371,207 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
 
         return jsonify(status="error", message=f"file {filename} not found"), 404
 
+    def _effective_google_client_id() -> str:
+        cid = (settings.google_client_id or os.environ.get("GOOGLE_CLIENT_ID") or "").strip()
+        if cid in ("UNCONFIGURED", "PLACEHOLDER_SET_IN_SECRET_MANAGER"):
+            return ""
+        return cid
+
+    def _effective_google_client_secret() -> str:
+        csec = (settings.google_client_secret or os.environ.get("GOOGLE_CLIENT_SECRET") or "").strip()
+        if csec in ("UNCONFIGURED", "PLACEHOLDER_SET_IN_SECRET_MANAGER"):
+            return ""
+        return csec
+
+    def _google_redirect_uri(req) -> str:
+        env_uri = (os.environ.get("GOOGLE_REDIRECT_URI") or "").strip()
+        if env_uri:
+            return env_uri
+        scheme = (req.headers.get("X-Forwarded-Proto") or req.scheme or "https").split(",")[0].strip()
+        return f"{scheme}://{req.host}/auth/google/callback"
+
+    def _run_migration_and_publish() -> Dict[str, Any]:
+        from scripts.migrate_xlsx_to_firestore import migrate_xlsx_to_firestore
+        p = get_pipeline()
+        mig_res: Dict[str, Any] = {}
+        xp = get_xlsx_path(p)
+        if xp and os.path.exists(xp):
+            mig_res = migrate_xlsx_to_firestore(
+                xp, db=db, settings=settings, publish_cdn=False
+            )
+        elif hasattr(db, "ensure_seeded"):
+            mig_res = db.ensure_seeded()
+        site_res = p.publish_site()
+        return {"migrated": mig_res, "site": site_res}
+
+    @app.get("/auth/google/login")
+    def google_oauth_login():
+        """Initiates Google OAuth 2.0 Authorization Code flow."""
+        client_id = _effective_google_client_id()
+        if not client_id:
+            return redirect("/app?oauth_error=google_oauth_not_configured")
+        from urllib.parse import urlencode
+        redirect_uri = _google_redirect_uri(request)
+        params = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": "openid email profile",
+            "access_type": "online",
+            "prompt": "select_account",
+        }
+        return redirect(f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}")
+
+    @app.get("/auth/google/callback")
+    def google_oauth_callback():
+        """Handles Google OAuth 2.0 Authorization Code callback, exchanges code for tokens, and logs in user."""
+        error = (request.args.get("error") or "").strip()
+        code = (request.args.get("code") or "").strip()
+        if error or not code:
+            return redirect(f"/app?oauth_error={html_escape(error or 'missing_code')}")
+
+        client_id = _effective_google_client_id()
+        client_secret = _effective_google_client_secret()
+        redirect_uri = _google_redirect_uri(request)
+
+        import requests as http_requests
+        try:
+            token_resp = http_requests.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "code": code,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+                timeout=15,
+            )
+            token_data = token_resp.json() if token_resp.content else {}
+        except Exception as exc:
+            log.warning("Google OAuth token exchange failed: %s", exc)
+            return redirect("/app?oauth_error=token_exchange_failed")
+
+        if not token_resp.ok or "error" in token_data:
+            err_code = str(token_data.get("error") or "token_exchange_error")
+            return redirect(f"/app?oauth_error={html_escape(err_code)}")
+
+        id_token_str = token_data.get("id_token")
+        access_token = token_data.get("access_token")
+        userinfo: Dict[str, Any] = {}
+
+        if id_token_str:
+            try:
+                from google.oauth2 import id_token
+                from google.auth.transport import requests as google_requests
+                userinfo = id_token.verify_oauth2_token(
+                    id_token_str, google_requests.Request(), audience=client_id or None
+                ) or {}
+            except Exception as exc:
+                log.warning("Google OAuth callback id_token verification failed: %s", exc)
+
+        if not userinfo.get("email") and access_token:
+            try:
+                ui_resp = http_requests.get(
+                    "https://openidconnect.googleapis.com/v1/userinfo",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=10,
+                )
+                if ui_resp.ok:
+                    userinfo = ui_resp.json() or {}
+            except Exception as exc:
+                log.warning("Google OAuth userinfo fetch failed: %s", exc)
+
+        email = str(userinfo.get("email") or "").strip().lower()
+        if not email:
+            return redirect("/app?oauth_error=missing_email")
+
+        name = str(userinfo.get("name") or email.split("@")[0]).strip()
+        if db.is_admin_user(email):
+            role = "admin"
+            u_info = db.get_user(email) if hasattr(db, "get_user") else None
+            if isinstance(u_info, dict) and u_info.get("name"):
+                name = u_info["name"]
+            token = f"session-{hashlib.sha256(f'{email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
+            active_admin_tokens.add(token)
+        else:
+            u_obj = db.get_user(email) if hasattr(db, "get_user") else None
+            if isinstance(u_obj, dict) and u_obj.get("role") in ("admin", "user"):
+                role = u_obj["role"]
+                name = u_obj.get("name") or name
+            else:
+                role = "user"
+                if hasattr(db, "update_user_role"):
+                    db.update_user_role(email, "user", name=name)
+            if role == "admin":
+                token = f"session-{hashlib.sha256(f'{email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
+                active_admin_tokens.add(token)
+            else:
+                token = f"user-session-{hashlib.sha256(f'{email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
+
+        user_payload = json.dumps({"email": email, "name": name, "role": role}, ensure_ascii=False)
+        token_payload = json.dumps(token)
+        callback_html = f"""<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>正在登录...</title></head>
+<body><script>
+try {{
+  localStorage.setItem("authToken", {token_payload});
+  localStorage.setItem("currentUser", JSON.stringify({user_payload}));
+}} catch (e) {{}}
+window.location.replace("/app?tab=entry");
+</script></body></html>"""
+        resp = Response(callback_html, mimetype="text/html; charset=utf-8")
+        resp.set_cookie("user_role", role, max_age=BOOKLET_COOKIE_MAX_AGE, httponly=False, samesite="Lax")
+        if role == "admin":
+            resp.set_cookie(ADMIN_AUTH_COOKIE, token, max_age=BOOKLET_COOKIE_MAX_AGE, httponly=True, samesite="Lax")
+        else:
+            resp.delete_cookie(ADMIN_AUTH_COOKIE)
+        return resp
+
     # -------------------------------------------------------------------------
     # Unified API Endpoint (/api - replaces Apps Script calls from frontend)
     # -------------------------------------------------------------------------
-    @app.post("/api")
+    @app.route("/api", methods=["GET", "POST"])
     def api_handler():
         """Backend API powering the Manage Group Finance frontend."""
-        data = request.get_json(force=True, silent=True) or request.form.to_dict() or {}
+        if request.method == "GET":
+            data = request.args.to_dict() or {}
+        else:
+            data = request.get_json(force=True, silent=True) or request.form.to_dict() or {}
         if not data:
             return jsonify(status="error", message="请求体不能为空。"), 400
         action = data.get("action", "add_record")
+
+        # Action: status
+        if action == "status":
+            eff_cid = _effective_google_client_id()
+            return jsonify(
+                status="ok",
+                db_mode=getattr(db, "mode", "memory"),
+                project_id=getattr(db, "project_id", ""),
+                emulator_host=os.environ.get("FIRESTORE_EMULATOR_HOST", ""),
+                google_client_id=eff_cid,
+                google_oauth_enabled=bool(eff_cid),
+            )
+
+        # Action: migrate_to_firestore
+        if action == "migrate_to_firestore":
+            try:
+                res = _run_migration_and_publish()
+                return jsonify(status="success", message="数据已成功同步并发布", **res)
+            except Exception as exc:
+                log.exception("migrate_to_firestore failed")
+                return jsonify(status="error", message=str(exc)), 500
+
+        # Action: get_record (Read single transaction)
+        if action == "get_record":
+            tx_id = str(data.get("id") or data.get("tx_id") or "").strip()
+            if not tx_id:
+                return jsonify(status="error", message="Transaction ID (id) is required."), 400
+            tx = db.get_transaction(tx_id) if hasattr(db, "get_transaction") else None
+            if not tx:
+                return jsonify(status="error", message="Transaction not found."), 404
+            return jsonify(status="success", transaction=tx)
 
         # 1. Action: login
         if action == "login":
@@ -369,7 +581,28 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
                 return jsonify(status="error", message="Username and password are required."), 400
 
             if db.verify_user(username, password):
-                return jsonify(status="success", user=username, token="auth-" + username)
+                u_obj = db.get_user(username) if hasattr(db, "get_user") else None
+                role = (
+                    u_obj.get("role", "admin")
+                    if isinstance(u_obj, dict)
+                    else ("admin" if db.is_admin_user(username) or username.lower() == "admin" else "user")
+                )
+                name = u_obj.get("name", username) if isinstance(u_obj, dict) else username
+                resp = jsonify(
+                    status="success",
+                    user=username,
+                    role=role,
+                    user_info={"email": username, "name": name, "role": role},
+                    token="auth-" + username,
+                )
+                resp.set_cookie("user_role", role, max_age=BOOKLET_COOKIE_MAX_AGE, httponly=False, samesite="Lax")
+                if role == "admin":
+                    admin_token = f"session-{hashlib.sha256(f'{username}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
+                    active_admin_tokens.add(admin_token)
+                    resp.set_cookie(ADMIN_AUTH_COOKIE, admin_token, max_age=BOOKLET_COOKIE_MAX_AGE, httponly=True, samesite="Lax")
+                else:
+                    resp.delete_cookie(ADMIN_AUTH_COOKIE)
+                return resp
             return jsonify(status="error", message="Invalid credentials"), 401
 
         # Action: google_login
@@ -379,38 +612,220 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
                 return jsonify(status="error", message="Missing credential token"), 400
 
             email = ""
+            g_name = ""
+            verified_real_token = False
             if credential == "test-admin-token" or credential.startswith("test-"):
-                email = str(data.get("email") or "admin@groupfinance.com").strip().lower()
+                default_em = "user@group.finance.com" if credential == "test-user-token" else "admin@group.finance.com"
+                email = str(data.get("email") or default_em).strip().lower()
             else:
                 try:
                     from google.oauth2 import id_token
                     from google.auth.transport import requests as google_requests
-                    client_id = os.environ.get("GOOGLE_CLIENT_ID") or None
+                    client_id = _effective_google_client_id() or None
                     idinfo = id_token.verify_oauth2_token(credential, google_requests.Request(), audience=client_id)
                     email = str(idinfo.get("email", "")).strip().lower()
+                    g_name = str(idinfo.get("name") or "").strip()
+                    verified_real_token = True
                 except Exception as exc:
                     log.warning("Google ID token verification failed: %s", exc)
                     if credential == "test-admin-token":
-                        email = str(data.get("email") or "admin@groupfinance.com").strip().lower()
+                        email = str(data.get("email") or "admin@group.finance.com").strip().lower()
                     else:
                         return jsonify(status="error", message=f"Invalid credential token: {exc}"), 401
 
             if not email:
                 return jsonify(status="error", message="Unable to extract email from credential."), 400
 
-            if not db.is_admin_user(email):
-                return jsonify(status="error", message=f"Forbidden: {email} is not an authorized administrator."), 403
+            if db.is_admin_user(email):
+                u_info = db.get_user(email) if hasattr(db, "get_user") else None
+                u_name = (u_info.get("name") if isinstance(u_info, dict) else None) or g_name or "Admin"
+                token = f"session-{hashlib.sha256(f'{email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
+                active_admin_tokens.add(token)
 
-            token = f"session-{hashlib.sha256(f'{email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
-            active_admin_tokens.add(token)
+                resp = jsonify(
+                    status="success",
+                    token=token,
+                    user={"email": email, "name": u_name, "role": "admin"}
+                )
+                resp.set_cookie(ADMIN_AUTH_COOKIE, token, max_age=BOOKLET_COOKIE_MAX_AGE, httponly=True, samesite="Lax")
+                resp.set_cookie("user_role", "admin", max_age=BOOKLET_COOKIE_MAX_AGE, httponly=False, samesite="Lax")
+                return resp
 
-            resp = jsonify(
+            user_obj = db.get_user(email) if hasattr(db, "get_user") else None
+            if isinstance(user_obj, dict) and user_obj.get("role") == "user" and user_obj.get("status") == "active":
+                token = f"user-session-{hashlib.sha256(f'{email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
+                resp = jsonify(
+                    status="success",
+                    token=token,
+                    user={"email": email, "name": user_obj.get("name", email), "role": "user"}
+                )
+                resp.delete_cookie(ADMIN_AUTH_COOKIE)
+                resp.set_cookie("user_role", "user", max_age=BOOKLET_COOKIE_MAX_AGE, httponly=False, samesite="Lax")
+                return resp
+
+            if data.get("login_as") == "user" or verified_real_token:
+                u_name = str(data.get("name") or g_name or email.split("@")[0]).strip()
+                if hasattr(db, "update_user_role"):
+                    db.update_user_role(email, "user", name=u_name)
+                token = f"user-session-{hashlib.sha256(f'{email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
+                resp = jsonify(
+                    status="success",
+                    token=token,
+                    user={"email": email, "name": u_name, "role": "user"}
+                )
+                resp.delete_cookie(ADMIN_AUTH_COOKIE)
+                resp.set_cookie("user_role", "user", max_age=BOOKLET_COOKIE_MAX_AGE, httponly=False, samesite="Lax")
+                return resp
+
+            return jsonify(status="error", message=f"Forbidden: {email} is not an authorized administrator."), 403
+
+        # Action: get_settings
+        if action == "get_settings":
+            eff_cid = _effective_google_client_id()
+            app_settings = db.get_app_settings() if hasattr(db, "get_app_settings") else {}
+            users = db.list_users() if hasattr(db, "list_users") else []
+            return jsonify(
                 status="success",
-                token=token,
-                user={"email": email, "role": "admin"}
+                settings=app_settings,
+                users=users,
+                google_client_id=eff_cid,
+                google_oauth_enabled=bool(eff_cid),
             )
-            resp.set_cookie(ADMIN_AUTH_COOKIE, token, max_age=BOOKLET_COOKIE_MAX_AGE, httponly=True, samesite="Lax")
-            return resp
+
+        # Action: update_settings
+        if action == "update_settings":
+            updated = db.update_app_settings(data) if hasattr(db, "update_app_settings") else {}
+            bk = updated.get("booklet") if isinstance(updated, dict) else None
+            if not bk and isinstance(data.get("booklet"), dict):
+                bk = data["booklet"]
+            if isinstance(bk, dict):
+                if bk.get("verify_by"):
+                    settings.verify_by = str(bk["verify_by"]).strip()
+                if bk.get("verify_name"):
+                    settings.verify_name = str(bk["verify_name"]).strip()
+            try:
+                get_pipeline().publish_site()
+            except Exception as exc:
+                log.warning("Auto-publish after update_settings failed: %s", exc)
+            return jsonify(status="success", message="设置已成功保存并同步", settings=updated)
+
+        # Action: list_users
+        if action == "list_users":
+            users = db.list_users() if hasattr(db, "list_users") else []
+            return jsonify(status="success", users=users)
+
+        # Action: update_user_role
+        if action == "update_user_role":
+            email = str(data.get("email") or "").strip().lower()
+            role = str(data.get("role") or "user").strip().lower()
+            name = str(data.get("name") or "").strip() or None
+            if not email or role not in ("admin", "user"):
+                return jsonify(status="error", message="无效的邮箱或角色权限"), 400
+            try:
+                u = db.update_user_role(email, role, name=name)
+            except ValueError as exc:
+                return jsonify(status="error", message=str(exc)), 400
+            return jsonify(status="success", message="角色权限已更新", user=u, users=db.list_users())
+
+        # Action: get_booklet_data
+        if action == "get_booklet_data":
+            try:
+                year = int(data.get("year") or settings.now().year)
+            except (ValueError, TypeError):
+                year = settings.now().year
+
+            app_cfg = db.get_app_settings() if hasattr(db, "get_app_settings") else {}
+            booklet_cfg = (app_cfg.get("booklet") if isinstance(app_cfg, dict) else None) or {}
+            group_code = booklet_cfg.get("group_code") or "YA5"
+            counters = booklet_cfg.get("counters") or "Rivaldo, Brendon"
+            verify_by = booklet_cfg.get("verify_by") or settings.verify_by or "Brendon"
+            verify_name = booklet_cfg.get("verify_name") or settings.verify_name or "Rivaldo"
+
+            now_dt = settings.now()
+            cur_ym = (now_dt.year, now_dt.month)
+            p = get_pipeline()
+            try:
+                ms = build_months(safe_load_source(p), upto=(year, 12), opening_balance=settings.opening_balance)
+            except Exception as exc:
+                log.warning("get_booklet_data build_months failed: %s", exc)
+                ms = {}
+
+            db_txs = db.query_transactions(year=year, limit=1000) if hasattr(db, "query_transactions") else []
+            first_opening = float(ms[min(ms.keys())].opening) if ms else float(settings.opening_balance)
+            running_bal = first_opening
+
+            months_list: List[Dict[str, Any]] = []
+            for m_idx in range(1, 13):
+                ym = (year, m_idx)
+                m_obj = ms.get(ym)
+                if m_obj is not None:
+                    open_val = float(m_obj.opening)
+                    inc_val = float(m_obj.total_income)
+                    exp_val = float(m_obj.total_expense)
+                    close_val = float(m_obj.closing)
+                    running_bal = close_val
+                else:
+                    open_val = running_bal
+                    inc_val = 0.0
+                    exp_val = 0.0
+                    close_val = running_bal
+
+                month_db_txs = [t for t in db_txs if t.get("month") == m_idx]
+                used_tx_ids = set()
+                entries_list: List[Dict[str, Any]] = []
+                if m_obj is not None:
+                    for e in m_obj.entries:
+                        e_date_iso = e.date.isoformat() if e.date else ""
+                        e_short_date = f"{e.date.month:02d}-{e.date.day:02d}" if e.date else ""
+                        matched_id = ""
+                        matched_user = "admin"
+                        for t in month_db_txs:
+                            tid = t.get("id", "")
+                            if tid in used_tx_ids:
+                                continue
+                            t_item = str(t.get("item", "")).strip()
+                            t_inc = float(t.get("income", 0) or 0)
+                            t_exp = float(t.get("expense", 0) or 0)
+                            t_date = str(t.get("date", "")).strip()
+                            if (t_item == e.item
+                                    and abs(t_inc - float(e.income)) < 0.01
+                                    and abs(t_exp - float(e.expense)) < 0.01
+                                    and (not e_date_iso or not t_date or t_date.startswith(e_date_iso) or e_date_iso.endswith(t_date))):
+                                matched_id = tid
+                                matched_user = t.get("user", "admin")
+                                if tid:
+                                    used_tx_ids.add(tid)
+                                break
+                        entries_list.append({
+                            "id": matched_id,
+                            "date": e_date_iso,
+                            "short_date": e_short_date,
+                            "item": e.item,
+                            "income": float(e.income),
+                            "expense": float(e.expense),
+                            "balance": float(e.balance),
+                            "user": matched_user,
+                        })
+
+                last_d = last_day_of_month(ym)
+                is_closed = p._closed(ym, cur_ym) if hasattr(p, "_closed") else (ym < cur_ym)
+                months_list.append({
+                    "year": year,
+                    "month": m_idx,
+                    "opening": open_val,
+                    "total_income": inc_val,
+                    "total_expense": exp_val,
+                    "closing": close_val,
+                    "closed": is_closed,
+                    "closing_date": f"{last_d.day}/{m_idx}/{year}",
+                    "group_id": group_code,
+                    "workers": counters,
+                    "verify_by": verify_by,
+                    "verify_name": verify_name,
+                    "entries": entries_list,
+                })
+
+            return jsonify(status="success", year=year, settings=app_cfg, months=months_list)
 
         # Action: list_transactions
         if action == "list_transactions":
@@ -428,11 +843,68 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
                 limit = 200
 
             txs = db.query_transactions(year=year, month=month, search=search, limit=limit)
+            months_meta: Dict[str, Any] = {}
+            target_y = year or settings.now().year
+            default_open = float(settings.opening_balance) if settings.opening_balance else 693.0
+            first_open = default_open
+            try:
+                ms = build_months(safe_load_source(get_pipeline()), upto=(target_y, 12), opening_balance=settings.opening_balance)
+                if ms:
+                    first_open = float(ms[min(ms.keys())].opening) or default_open
+                run_bal = first_open
+                for m_idx in range(1, 13):
+                    m_obj = ms.get((target_y, m_idx))
+                    if m_obj is not None:
+                        open_v = float(m_obj.opening)
+                        inc_v = float(m_obj.total_income)
+                        exp_v = float(m_obj.total_expense)
+                        close_v = float(m_obj.closing)
+                        run_bal = close_v
+                        ents = [e.to_dict() for e in m_obj.entries]
+                    else:
+                        open_v = run_bal
+                        inc_v = 0.0
+                        exp_v = 0.0
+                        close_v = run_bal
+                        ents = []
+                    months_meta[str(m_idx)] = {
+                        "year": target_y,
+                        "month": m_idx,
+                        "opening": open_v,
+                        "opening_balance": open_v,
+                        "total_income": inc_v,
+                        "total_expense": exp_v,
+                        "closing": close_v,
+                        "closing_balance": close_v,
+                        "entries": ents,
+                    }
+            except Exception as exc:
+                log.warning("list_transactions months_meta calculation failed: %s", exc)
+
+            # Compute chronological running balances across the year's transactions
+            try:
+                all_year_txs = db.query_transactions(year=target_y, limit=None)
+                curr_bal = first_open
+                bal_by_id: Dict[str, float] = {}
+                for yt in all_year_txs:
+                    curr_bal = round(curr_bal + float(yt.get("income", 0) or 0) - float(yt.get("expense", 0) or 0), 2)
+                    if yt.get("id"):
+                        bal_by_id[yt["id"]] = curr_bal
+                for t in txs:
+                    tid = t.get("id")
+                    if tid and tid in bal_by_id:
+                        t["balance"] = bal_by_id[tid]
+                    d_str = str(t.get("date", "")).strip()
+                    t["shortDate"] = d_str[5:10] if len(d_str) >= 10 else d_str
+            except Exception as exc:
+                log.warning("list_transactions running balance calculation failed: %s", exc)
+
             return jsonify(
                 status="success",
                 transactions=txs,
                 data=txs,
-                count=len(txs)
+                count=len(txs),
+                months_meta=months_meta,
             )
 
         # Action: update_record
@@ -442,7 +914,7 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
                 return jsonify(status="error", message="Transaction ID (id) is required."), 400
 
             updates = {}
-            for k in ("date", "item", "income", "expense", "balance", "user", "year", "month"):
+            for k in ("date", "item", "income", "expense", "balance", "user", "year", "month", "orig_date", "orig_item"):
                 if k in data:
                     updates[k] = data[k]
 
@@ -456,7 +928,8 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
             except Exception as exc:
                 log.warning("Auto-publish after update_record failed: %s", exc)
 
-            return jsonify(status="success", message="记录已成功更新", id=tx_id)
+            updated_tx = db.get_transaction(tx_id) if hasattr(db, "get_transaction") else None
+            return jsonify(status="success", message="记录已成功更新", id=tx_id, transaction=updated_tx)
 
         # 2. Action: get_yearly_summary
         if action == "get_yearly_summary":
@@ -506,21 +979,22 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         # 3. Action: delete_record
         if action == "delete_record":
             tx_id = str(data.get("id") or data.get("tx_id") or "").strip()
+            old_tx = db.get_transaction(tx_id) if (tx_id and hasattr(db, "get_transaction")) else None
             deleted_by_id = False
             if tx_id:
                 deleted_by_id = db.delete_transaction_by_id(tx_id)
 
             try:
-                year = int(data.get("year") or 0)
-                month = int(data.get("month") or 0)
+                year = int(data.get("year") or (old_tx.get("year") if old_tx else 0) or 0)
+                month = int(data.get("month") or (old_tx.get("month") if old_tx else 0) or 0)
             except (ValueError, TypeError):
                 year = 0
                 month = 0
-            date_str = str(data.get("date") or "").strip()
-            item = str(data.get("item") or "").strip()
+            date_str = str(data.get("date") or (old_tx.get("date") if old_tx else "") or "").strip()
+            item = str(data.get("item") if "item" in data else (old_tx.get("item") if old_tx else "") or "").strip()
             try:
-                income = float(data.get("income") or 0)
-                expense = float(data.get("expense") or 0)
+                income = float(data.get("income") if "income" in data and data.get("income") is not None else (old_tx.get("income") if old_tx else 0) or 0)
+                expense = float(data.get("expense") if "expense" in data and data.get("expense") is not None else (old_tx.get("expense") if old_tx else 0) or 0)
             except (ValueError, TypeError):
                 income = 0.0
                 expense = 0.0
@@ -537,18 +1011,7 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
 
             p = get_pipeline()
 
-            # If Apps Script is configured, call Apps Script with action="delete_record"
-            if settings.apps_script_url:
-                try:
-                    from .sources import AppsScriptClient
-                    client = AppsScriptClient(settings.apps_script_url, settings.pipeline_token)
-                    client.call("delete_record", year=year, month=month, date=date_str,
-                                item=item, income=income, expense=expense)
-                except Exception as exc:
-                    log.warning("Could not sync delete to Apps Script: %s", exc)
-
-            # Always attempt to delete from the Excel file (小组奉献资料库_corrected.xlsx),
-            # regardless of whether p.source is XlsxSource or AppsScriptSource
+            # Always attempt to delete from the Excel file (小组奉献资料库_corrected.xlsx)
             xlsx_path = get_xlsx_path(p)
             if xlsx_path and os.path.exists(xlsx_path):
                 try:
@@ -621,7 +1084,7 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
             except Exception as exc:
                 log.warning("Auto-publish after delete_record failed: %s", exc)
 
-            return jsonify(status="success", message="记录已成功删除")
+            return jsonify(status="success", message="记录已成功删除", id=tx_id, deleted=True)
 
         # 4. Action: add_record (default when submitting transactions)
         date_str = str(data.get("date") or settings.today().isoformat()).strip()
@@ -641,16 +1104,6 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
             return jsonify(status="error", message="错误：收入和支出不能同时大于 0。请分别记录收入和支出事项。"), 400
 
         p = get_pipeline()
-
-        # If Apps Script is configured, pass to Google Sheets to keep it in sync
-        sheet_result = None
-        if settings.apps_script_url:
-            try:
-                from .sources import AppsScriptClient
-                client = AppsScriptClient(settings.apps_script_url, settings.pipeline_token)
-                sheet_result = client.call("add_record", date=date_str, item=item, income=income, expense=expense)
-            except Exception as exc:
-                log.warning("Could not sync directly to Apps Script: %s", exc)
 
         # Append to local corrected xlsx if xlsx exists
         xlsx_path = get_xlsx_path(p)
@@ -685,11 +1138,11 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         try:
             cur_ms = build_months(safe_load_source(p), upto=(settings.now().year, settings.now().month), opening_balance=settings.opening_balance)
             cur_m = cur_ms.get((settings.now().year, settings.now().month))
-            new_bal = float(cur_m.closing) if cur_m else (income - expense)
+            new_bal = float(cur_m.closing) + income - expense if cur_m else (income - expense)
         except Exception:
             new_bal = income - expense
 
-        db.add_transaction(
+        created_tx = db.add_transaction(
             date_str=date_str, item=item, income=income, expense=expense,
             balance=new_bal, user=str(data.get("user", "admin"))
         )
@@ -702,8 +1155,6 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
 
         # Get recent 5 logs for UI echo
         recent_logs = db.get_recent_transactions(limit=5)
-        if not recent_logs and sheet_result and sheet_result.get("logs"):
-            recent_logs = sheet_result.get("logs")
         if not recent_logs:
             try:
                 all_months = build_months(safe_load_source(p), upto=(settings.now().year, settings.now().month), opening_balance=settings.opening_balance)
@@ -722,7 +1173,9 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         return jsonify(
             status="success",
             message="记录成功！",
-            targetSheet=sheet_result.get("targetSheet") if sheet_result else f"{date_str[:7]}",
+            id=created_tx.get("id", "") if isinstance(created_tx, dict) else "",
+            transaction=created_tx,
+            targetSheet=f"{date_str[:7]}",
             logs=recent_logs,
         )
 
@@ -733,7 +1186,12 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
     def sync():
         if not authorised(allow_netlify=True):
             return jsonify(status="error", message="unauthorized"), 401
+        body = request.get_json(silent=True) or {}
+        do_migrate = str(request.args.get("migrate") or body.get("migrate") or "").lower() in ("1", "true", "yes")
         try:
+            if do_migrate:
+                res = _run_migration_and_publish()
+                return jsonify(status="ok", **res.get("site", {}), migrated=res.get("migrated", {}))
             return jsonify(get_pipeline().publish_site())
         except Exception as exc:
             log.exception("sync failed")

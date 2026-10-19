@@ -220,14 +220,15 @@ html, body { background: none; }
 <div class="nav"><div class="nav-inner">
   <div class="nav-brand">小组每月奉献记录 <span class="badge">2026年5月</span></div>
   <div class="nav-links">
-    <a href="/manage" style="background:#4f46e5;color:#fff;border-color:#4f46e5;font-weight:600;" title="前往财务登记系统">📝 登记账目</a>
-    <a href="https://docs.google.com/spreadsheets/d/1ruK6Vqx-giwPewYyxkTr95VKk4wg5IpkVplGan9sKhE/edit" target="_blank" rel="noopener noreferrer" style="background:#0f766e;color:#fff;border-color:#0f766e;font-weight:600;" title="在 Google Sheets 中打开原始资料库">📊 Google Sheets 资料库 ↗</a>
+    <a href="/app?tab=entry" style="background:#4f46e5;color:#fff;border-color:#4f46e5;font-weight:600;" title="前往记账录入">📝 记账录入</a>
+    <a href="/app?tab=database-view" style="background:#0284c7;color:#fff;border-color:#0284c7;font-weight:600;" title="前往数据库管理">🗄️ 数据库管理</a>
+    <a href="/booklet" style="background:#1e293b;color:#fff;border-color:#1e293b;font-weight:600;" title="奉献记录全册">📖 奉献记录全册</a>
     <a href="index.html" title="查看从上到下完整显示">全部月份</a>
     <a href="2026-01.html">1月</a><a href="2026-02.html">2月</a><a href="2026-03.html">3月</a><a href="2026-04.html">4月</a><a href="2026-05.html" class=cur>5月</a><a href="2026-06.html">6月</a><a href="2026-07.html">7月</a><a href="2026-08.html">8月</a><a href="2026-09.html">9月</a><a href="2026-10.html">10月(当前)</a>
     <button class="btn-print" onclick="window.print()">🖨️ 打印 / 导出 PDF</button>
     <a href="/booklet/logout" style="background:#f8fafc;color:#64748b;border-color:#cbd5e1;font-size:12px;" title="退出册子登录">🚪 退出</a>
   </div>
-  <span class="meta">更新于 2026-10-14 21:49 Asia/Singapore</span>
+  <span class="meta">更新于 2026-10-19 22:46 Asia/Kuala_Lumpur</span>
 </div></div>
 <div class="sheet-wrap">
 <div class="sheet">
@@ -235,14 +236,22 @@ html, body { background: none; }
 <div class="hdr">小组编号：<u>__YA5___</u>            点算同工：<u>Rivaldo, Brendon</u>        月份：_5 /2026</div>
 <table><colgroup><col><col><col><col><col><col><col><col class="col-act"></colgroup><thead><tr><th>日期</th><th>事项</th><th>数目-收入</th><th>数目-支出</th><th>结存</th><th>签名</th><th>签名</th><th class="col-act"></th></tr></thead><tbody>
 <tr><td></td><td>Balance b/f</td><td>610</td><td></td><td>610</td><td></td><td></td><td class="col-act"></td></tr>
-<tr><td class="d">05-13</td><td class="i">小组</td><td class="n">60</td><td class="n"></td><td class="b">670</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '5', '05-13', '小组', '60', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">05-14</td><td class="i">5月生日</td><td class="n"></td><td class="n">100</td><td class="b">570</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '5', '05-14', '5月生日', '0', '100', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">05-28</td><td class="i">小组</td><td class="n">90</td><td class="n"></td><td class="b">660</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '5', '05-28', '小组', '90', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">05-13</td><td class="i">小组</td><td class="n">60</td><td class="n"></td><td class="b">670</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '5', '05-13', '小组', '60.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">05-14</td><td class="i">5月生日</td><td class="n"></td><td class="n">100</td><td class="b">570</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '5', '05-14', '5月生日', '0', '100.0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">05-28</td><td class="i">小组</td><td class="n">90</td><td class="n"></td><td class="b">660</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '5', '05-28', '小组', '90.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
 </tbody></table>
 <div class="foot"><div class="row"><div class="left-col">Verify by: ________Brendon__________</div><div class="right-col">Name     :  _______Rivaldo___________</div></div><div class="row row-date"><div class="left-col">Date:  _______31/5/2026_______</div></div></div>
 </div>
 </div>
 <script>
+(function() {
+  try {
+    var u = JSON.parse(localStorage.getItem('currentUser') || 'null');
+    if (u && u.role && u.role !== 'admin') {
+      window.location.replace('/app?tab=entry');
+    }
+  } catch (e) {}
+})();
 async function deleteEntry(year, month, dateStr, item, income, expense, btn) {
   var amtStr = Number(income) > 0 ? ('收入: ' + income) : (Number(expense) > 0 ? ('支出: ' + expense) : '');
   var msg = '确定要删除这条记录吗？\n\n' +

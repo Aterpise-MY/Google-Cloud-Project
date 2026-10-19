@@ -34,12 +34,6 @@ variable "timezone" {
   default     = "Asia/Kuala_Lumpur"
 }
 
-variable "apps_script_url" {
-  description = "Web-app (/exec) URL of the Google Apps Script deployment"
-  type        = string
-  default     = "https://script.google.com/macros/s/AKfycbyTZAyshSlMEaITGfXx4yJBmSCr9_A00YHWjdwVMK5rECxG7iTLHqNuumoV-Nt5gb-kQg/exec"
-}
-
 variable "pipeline_token" {
   description = "Optional existing pipeline token. If left blank, Terraform will generate a secure 32-byte hex token."
   type        = string
@@ -77,6 +71,31 @@ variable "booklet_password" {
   type        = string
   default     = ""
   sensitive   = true
+}
+
+variable "google_oauth_client_id" {
+  description = "Google OAuth 2.0 Client ID for Google Account login (stored in Secret Manager as ledger-google-oauth-client-id and mounted as GOOGLE_CLIENT_ID)."
+  type        = string
+  default     = ""
+}
+
+variable "google_oauth_client_secret" {
+  description = "Google OAuth 2.0 Client Secret for Google Account login (stored in Secret Manager as ledger-google-oauth-client-secret and mounted as GOOGLE_CLIENT_SECRET)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "cdn_url_map" {
+  description = "Optional Cloud CDN URL map name to invalidate automatically whenever Firestore / site data updates (CDN_URL_MAP)."
+  type        = string
+  default     = ""
+}
+
+variable "enable_cloud_cdn" {
+  description = "Set to true to provision a Cloud CDN-enabled backend bucket and global URL map fronting the public site bucket."
+  type        = bool
+  default     = false
 }
 
 variable "github_repository" {

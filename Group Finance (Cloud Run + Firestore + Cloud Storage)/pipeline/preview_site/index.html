@@ -220,8 +220,9 @@ html, body { background: none; }
 <div class="nav"><div class="nav-inner">
   <div class="nav-brand">小组每月奉献记录 <span class="badge">全表连排视图 (从上到下)</span></div>
   <div class="nav-links">
-    <a href="/manage" style="background:#4f46e5;color:#fff;border-color:#4f46e5;font-weight:600;" title="前往财务登记系统">📝 登记账目</a>
-    <a href="https://docs.google.com/spreadsheets/d/1ruK6Vqx-giwPewYyxkTr95VKk4wg5IpkVplGan9sKhE/edit" target="_blank" rel="noopener noreferrer" style="background:#0f766e;color:#fff;border-color:#0f766e;font-weight:600;" title="在 Google Sheets 中打开原始资料库">📊 Google Sheets 资料库 ↗</a>
+    <a href="/app?tab=entry" style="background:#4f46e5;color:#fff;border-color:#4f46e5;font-weight:600;" title="前往记账录入">📝 记账录入</a>
+    <a href="/app?tab=database-view" style="background:#0284c7;color:#fff;border-color:#0284c7;font-weight:600;" title="前往数据库管理">🗄️ 数据库管理</a>
+    <a href="/booklet" style="background:#1e293b;color:#fff;border-color:#1e293b;font-weight:600;" title="奉献记录全册">📖 奉献记录全册</a>
     <a href="#month-2026-01">1月</a>
     <a href="#month-2026-02">2月</a>
     <a href="#month-2026-03">3月</a>
@@ -235,7 +236,7 @@ html, body { background: none; }
     <button class="btn-print" onclick="window.print()">🖨️ 打印 / 导出 PDF</button>
     <a href="/booklet/logout" style="background:#f8fafc;color:#64748b;border-color:#cbd5e1;font-size:12px;" title="退出册子登录">🚪 退出</a>
   </div>
-  <span class="meta">更新于 2026-10-14 21:49 Asia/Singapore</span>
+  <span class="meta">更新于 2026-10-19 22:46 Asia/Kuala_Lumpur</span>
 </div></div>
 
 <div class="sheet-wrap">
@@ -244,12 +245,12 @@ html, body { background: none; }
 <div class="hdr">小组编号：<u>__YA5___</u>            点算同工：<u>Rivaldo, Brendon</u>        月份：_1 /2026</div>
 <table><colgroup><col><col><col><col><col><col><col><col class="col-act"></colgroup><thead><tr><th>日期</th><th>事项</th><th>数目-收入</th><th>数目-支出</th><th>结存</th><th>签名</th><th>签名</th><th class="col-act"></th></tr></thead><tbody>
 <tr><td></td><td>Balance b/f</td><td>693</td><td></td><td>693</td><td></td><td></td><td class="col-act"></td></tr>
-<tr><td class="d">01-14</td><td class="i">小组聚会（教会）</td><td class="n">167</td><td class="n"></td><td class="b">860</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '1', '01-14', '小组聚会（教会）', '167', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">01-16</td><td class="i">转回给教会</td><td class="n"></td><td class="n">400</td><td class="b">460</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '1', '01-16', '转回给教会', '0', '400', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">01-17</td><td class="i">白金</td><td class="n"></td><td class="n">50</td><td class="b">410</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '1', '01-17', '白金', '0', '50', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">01-21</td><td class="i">小组</td><td class="n">89</td><td class="n"></td><td class="b">499</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '1', '01-21', '小组', '89', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">01-28</td><td class="i">生日蛋糕一月</td><td class="n"></td><td class="n">98</td><td class="b">401</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '1', '01-28', '生日蛋糕一月', '0', '98', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">01-29</td><td class="i">小组</td><td class="n">111</td><td class="n"></td><td class="b">512</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '1', '01-29', '小组', '111', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">01-14</td><td class="i">小组聚会（教会）</td><td class="n">167</td><td class="n"></td><td class="b">860</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '1', '01-14', '小组聚会（教会）', '167.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">01-16</td><td class="i">转回给教会</td><td class="n"></td><td class="n">400</td><td class="b">460</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '1', '01-16', '转回给教会', '0', '400.0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">01-17</td><td class="i">白金</td><td class="n"></td><td class="n">50</td><td class="b">410</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '1', '01-17', '白金', '0', '50.0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">01-21</td><td class="i">小组</td><td class="n">89</td><td class="n"></td><td class="b">499</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '1', '01-21', '小组', '89.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">01-28</td><td class="i">生日蛋糕一月</td><td class="n"></td><td class="n">98</td><td class="b">401</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '1', '01-28', '生日蛋糕一月', '0', '98.0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">01-29</td><td class="i">小组</td><td class="n">111</td><td class="n"></td><td class="b">512</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '1', '01-29', '小组', '111.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
 </tbody></table>
 <div class="foot"><div class="row"><div class="left-col">Verify by: ________Brendon__________</div><div class="right-col">Name     :  _______Rivaldo___________</div></div><div class="row row-date"><div class="left-col">Date:  _______31/1/2026_______</div></div></div>
 </div>
@@ -258,8 +259,8 @@ html, body { background: none; }
 <div class="hdr">小组编号：<u>__YA5___</u>            点算同工：<u>Rivaldo, Brendon</u>        月份：_2 /2026</div>
 <table><colgroup><col><col><col><col><col><col><col><col class="col-act"></colgroup><thead><tr><th>日期</th><th>事项</th><th>数目-收入</th><th>数目-支出</th><th>结存</th><th>签名</th><th>签名</th><th class="col-act"></th></tr></thead><tbody>
 <tr><td></td><td>Balance b/f</td><td>512</td><td></td><td>512</td><td></td><td></td><td class="col-act"></td></tr>
-<tr><td class="d">02-11</td><td class="i">小组</td><td class="n">40</td><td class="n"></td><td class="b">552</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '2', '02-11', '小组', '40', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">02-25</td><td class="i">生日二月</td><td class="n"></td><td class="n">100</td><td class="b">452</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '2', '02-25', '生日二月', '0', '100', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">02-11</td><td class="i">小组</td><td class="n">40</td><td class="n"></td><td class="b">552</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '2', '02-11', '小组', '40.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">02-25</td><td class="i">生日二月</td><td class="n"></td><td class="n">100</td><td class="b">452</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '2', '02-25', '生日二月', '0', '100.0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
 <tr><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="col-act"></td></tr>
 </tbody></table>
 <div class="foot"><div class="row"><div class="left-col">Verify by: ________Brendon__________</div><div class="right-col">Name     :  _______Rivaldo___________</div></div><div class="row row-date"><div class="left-col">Date:  _______28/2/2026_______</div></div></div>
@@ -269,9 +270,9 @@ html, body { background: none; }
 <div class="hdr">小组编号：<u>__YA5___</u>            点算同工：<u>Rivaldo, Brendon</u>        月份：_3 /2026</div>
 <table><colgroup><col><col><col><col><col><col><col><col class="col-act"></colgroup><thead><tr><th>日期</th><th>事项</th><th>数目-收入</th><th>数目-支出</th><th>结存</th><th>签名</th><th>签名</th><th class="col-act"></th></tr></thead><tbody>
 <tr><td></td><td>Balance b/f</td><td>452</td><td></td><td>452</td><td></td><td></td><td class="col-act"></td></tr>
-<tr><td class="d">03-11</td><td class="i">小组</td><td class="n">98</td><td class="n"></td><td class="b">550</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '3', '03-11', '小组', '98', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">03-18</td><td class="i">小组</td><td class="n">98</td><td class="n"></td><td class="b">648</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '3', '03-18', '小组', '98', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">03-22</td><td class="i">慧芬婚礼</td><td class="n"></td><td class="n">50</td><td class="b">598</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '3', '03-22', '慧芬婚礼', '0', '50', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">03-11</td><td class="i">小组</td><td class="n">98</td><td class="n"></td><td class="b">550</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '3', '03-11', '小组', '98.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">03-18</td><td class="i">小组</td><td class="n">98</td><td class="n"></td><td class="b">648</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '3', '03-18', '小组', '98.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">03-22</td><td class="i">慧芬婚礼</td><td class="n"></td><td class="n">50</td><td class="b">598</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '3', '03-22', '慧芬婚礼', '0', '50.0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
 </tbody></table>
 <div class="foot"><div class="row"><div class="left-col">Verify by: ________Brendon__________</div><div class="right-col">Name     :  _______Rivaldo___________</div></div><div class="row row-date"><div class="left-col">Date:  _______31/3/2026_______</div></div></div>
 </div>
@@ -280,8 +281,8 @@ html, body { background: none; }
 <div class="hdr">小组编号：<u>__YA5___</u>            点算同工：<u>Rivaldo, Brendon</u>        月份：_4 /2026</div>
 <table><colgroup><col><col><col><col><col><col><col><col class="col-act"></colgroup><thead><tr><th>日期</th><th>事项</th><th>数目-收入</th><th>数目-支出</th><th>结存</th><th>签名</th><th>签名</th><th class="col-act"></th></tr></thead><tbody>
 <tr><td></td><td>Balance b/f</td><td>598</td><td></td><td>598</td><td></td><td></td><td class="col-act"></td></tr>
-<tr><td class="d">04-22</td><td class="i">小组聚会（教会）</td><td class="n">100</td><td class="n"></td><td class="b">698</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '4', '04-22', '小组聚会（教会）', '100', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">04-29</td><td class="i">生日蛋糕四月</td><td class="n"></td><td class="n">88</td><td class="b">610</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '4', '04-29', '生日蛋糕四月', '0', '88', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">04-22</td><td class="i">小组聚会（教会）</td><td class="n">100</td><td class="n"></td><td class="b">698</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '4', '04-22', '小组聚会（教会）', '100.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">04-29</td><td class="i">生日蛋糕四月</td><td class="n"></td><td class="n">88</td><td class="b">610</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '4', '04-29', '生日蛋糕四月', '0', '88.0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
 <tr><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="col-act"></td></tr>
 </tbody></table>
 <div class="foot"><div class="row"><div class="left-col">Verify by: ________Brendon__________</div><div class="right-col">Name     :  _______Rivaldo___________</div></div><div class="row row-date"><div class="left-col">Date:  _______30/4/2026_______</div></div></div>
@@ -291,9 +292,9 @@ html, body { background: none; }
 <div class="hdr">小组编号：<u>__YA5___</u>            点算同工：<u>Rivaldo, Brendon</u>        月份：_5 /2026</div>
 <table><colgroup><col><col><col><col><col><col><col><col class="col-act"></colgroup><thead><tr><th>日期</th><th>事项</th><th>数目-收入</th><th>数目-支出</th><th>结存</th><th>签名</th><th>签名</th><th class="col-act"></th></tr></thead><tbody>
 <tr><td></td><td>Balance b/f</td><td>610</td><td></td><td>610</td><td></td><td></td><td class="col-act"></td></tr>
-<tr><td class="d">05-13</td><td class="i">小组</td><td class="n">60</td><td class="n"></td><td class="b">670</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '5', '05-13', '小组', '60', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">05-14</td><td class="i">5月生日</td><td class="n"></td><td class="n">100</td><td class="b">570</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '5', '05-14', '5月生日', '0', '100', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">05-28</td><td class="i">小组</td><td class="n">90</td><td class="n"></td><td class="b">660</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '5', '05-28', '小组', '90', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">05-13</td><td class="i">小组</td><td class="n">60</td><td class="n"></td><td class="b">670</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '5', '05-13', '小组', '60.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">05-14</td><td class="i">5月生日</td><td class="n"></td><td class="n">100</td><td class="b">570</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '5', '05-14', '5月生日', '0', '100.0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">05-28</td><td class="i">小组</td><td class="n">90</td><td class="n"></td><td class="b">660</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '5', '05-28', '小组', '90.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
 </tbody></table>
 <div class="foot"><div class="row"><div class="left-col">Verify by: ________Brendon__________</div><div class="right-col">Name     :  _______Rivaldo___________</div></div><div class="row row-date"><div class="left-col">Date:  _______31/5/2026_______</div></div></div>
 </div>
@@ -302,8 +303,8 @@ html, body { background: none; }
 <div class="hdr">小组编号：<u>__YA5___</u>            点算同工：<u>Rivaldo, Brendon</u>        月份：_6 /2026</div>
 <table><colgroup><col><col><col><col><col><col><col><col class="col-act"></colgroup><thead><tr><th>日期</th><th>事项</th><th>数目-收入</th><th>数目-支出</th><th>结存</th><th>签名</th><th>签名</th><th class="col-act"></th></tr></thead><tbody>
 <tr><td></td><td>Balance b/f</td><td>660</td><td></td><td>660</td><td></td><td></td><td class="col-act"></td></tr>
-<tr><td class="d">06-10</td><td class="i">小组</td><td class="n">100</td><td class="n"></td><td class="b">760</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '6', '06-10', '小组', '100', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">06-24</td><td class="i">惠芬住院水果</td><td class="n"></td><td class="n">50</td><td class="b">710</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '6', '06-24', '惠芬住院水果', '0', '50', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">06-10</td><td class="i">小组</td><td class="n">100</td><td class="n"></td><td class="b">760</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '6', '06-10', '小组', '100.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">06-24</td><td class="i">惠芬住院水果</td><td class="n"></td><td class="n">50</td><td class="b">710</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '6', '06-24', '惠芬住院水果', '0', '50.0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
 <tr><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="col-act"></td></tr>
 </tbody></table>
 <div class="foot"><div class="row"><div class="left-col">Verify by: ________Brendon__________</div><div class="right-col">Name     :  _______Rivaldo___________</div></div><div class="row row-date"><div class="left-col">Date:  _______30/6/2026_______</div></div></div>
@@ -313,9 +314,9 @@ html, body { background: none; }
 <div class="hdr">小组编号：<u>__YA5___</u>            点算同工：<u>Rivaldo, Brendon</u>        月份：_7 /2026</div>
 <table><colgroup><col><col><col><col><col><col><col><col class="col-act"></colgroup><thead><tr><th>日期</th><th>事项</th><th>数目-收入</th><th>数目-支出</th><th>结存</th><th>签名</th><th>签名</th><th class="col-act"></th></tr></thead><tbody>
 <tr><td></td><td>Balance b/f</td><td>710</td><td></td><td>710</td><td></td><td></td><td class="col-act"></td></tr>
-<tr><td class="d">07-08</td><td class="i">小组</td><td class="n">150</td><td class="n"></td><td class="b">860</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '7', '07-08', '小组', '150', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">07-15</td><td class="i">转教会</td><td class="n"></td><td class="n">450</td><td class="b">410</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '7', '07-15', '转教会', '0', '450', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">07-22</td><td class="i">小组</td><td class="n">88</td><td class="n"></td><td class="b">498</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '7', '07-22', '小组', '88', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">07-08</td><td class="i">小组</td><td class="n">150</td><td class="n"></td><td class="b">860</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '7', '07-08', '小组', '150.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">07-15</td><td class="i">转教会</td><td class="n"></td><td class="n">450</td><td class="b">410</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '7', '07-15', '转教会', '0', '450.0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">07-22</td><td class="i">小组</td><td class="n">88</td><td class="n"></td><td class="b">498</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '7', '07-22', '小组', '88.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
 </tbody></table>
 <div class="foot"><div class="row"><div class="left-col">Verify by: ________Brendon__________</div><div class="right-col">Name     :  _______Rivaldo___________</div></div><div class="row row-date"><div class="left-col">Date:  _______31/7/2026_______</div></div></div>
 </div>
@@ -324,7 +325,7 @@ html, body { background: none; }
 <div class="hdr">小组编号：<u>__YA5___</u>            点算同工：<u>Rivaldo, Brendon</u>        月份：_8 /2026</div>
 <table><colgroup><col><col><col><col><col><col><col><col class="col-act"></colgroup><thead><tr><th>日期</th><th>事项</th><th>数目-收入</th><th>数目-支出</th><th>结存</th><th>签名</th><th>签名</th><th class="col-act"></th></tr></thead><tbody>
 <tr><td></td><td>Balance b/f</td><td>498</td><td></td><td>498</td><td></td><td></td><td class="col-act"></td></tr>
-<tr><td class="d">08-13</td><td class="i">小组</td><td class="n">90</td><td class="n"></td><td class="b">588</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '8', '08-13', '小组', '90', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">08-13</td><td class="i">小组</td><td class="n">90</td><td class="n"></td><td class="b">588</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '8', '08-13', '小组', '90.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
 <tr><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="col-act"></td></tr>
 <tr><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="col-act"></td></tr>
 </tbody></table>
@@ -335,10 +336,10 @@ html, body { background: none; }
 <div class="hdr">小组编号：<u>__YA5___</u>            点算同工：<u>Rivaldo, Brendon</u>        月份：_9 /2026</div>
 <table><colgroup><col><col><col><col><col><col><col><col class="col-act"></colgroup><thead><tr><th>日期</th><th>事项</th><th>数目-收入</th><th>数目-支出</th><th>结存</th><th>签名</th><th>签名</th><th class="col-act"></th></tr></thead><tbody>
 <tr><td></td><td>Balance b/f</td><td>588</td><td></td><td>588</td><td></td><td></td><td class="col-act"></td></tr>
-<tr><td class="d">09-07</td><td class="i">小组茶点</td><td class="n"></td><td class="n">50</td><td class="b">538</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '9', '09-07', '小组茶点', '0', '50', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">09-09</td><td class="i">小组</td><td class="n">120</td><td class="n"></td><td class="b">658</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '9', '09-09', '小组', '120', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">09-16</td><td class="i">小组布道会</td><td class="n"></td><td class="n">250</td><td class="b">408</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '9', '09-16', '小组布道会', '0', '250', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
-<tr><td class="d">09-30</td><td class="i">9月生日</td><td class="n"></td><td class="n">89</td><td class="b">319</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '9', '09-30', '9月生日', '0', '89', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">09-07</td><td class="i">小组茶点</td><td class="n"></td><td class="n">50</td><td class="b">538</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '9', '09-07', '小组茶点', '0', '50.0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">09-09</td><td class="i">小组</td><td class="n">120</td><td class="n"></td><td class="b">658</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '9', '09-09', '小组', '120.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">09-16</td><td class="i">小组布道会</td><td class="n"></td><td class="n">250</td><td class="b">408</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '9', '09-16', '小组布道会', '0', '250.0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
+<tr><td class="d">09-30</td><td class="i">9月生日</td><td class="n"></td><td class="n">89</td><td class="b">319</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '9', '09-30', '9月生日', '0', '89.0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
 </tbody></table>
 <div class="foot"><div class="row"><div class="left-col">Verify by: ________Brendon__________</div><div class="right-col">Name     :  _______Rivaldo___________</div></div><div class="row row-date"><div class="left-col">Date:  _______30/9/2026_______</div></div></div>
 </div>
@@ -347,7 +348,7 @@ html, body { background: none; }
 <div class="hdr">小组编号：<u>__YA5___</u>            点算同工：<u>Rivaldo, Brendon</u>        月份：_10 /2026</div>
 <table><colgroup><col><col><col><col><col><col><col><col class="col-act"></colgroup><thead><tr><th>日期</th><th>事项</th><th>数目-收入</th><th>数目-支出</th><th>结存</th><th>签名</th><th>签名</th><th class="col-act"></th></tr></thead><tbody>
 <tr><td></td><td>Balance b/f</td><td>319</td><td></td><td>319</td><td></td><td></td><td class="col-act"></td></tr>
-<tr><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="col-act"></td></tr>
+<tr><td class="d">10-19</td><td class="i">Emulator CRUD Verification</td><td class="n">150</td><td class="n"></td><td class="b">469</td><td></td><td></td><td class="col-act"><button type="button" class="btn-del" onclick="deleteEntry('2026', '10', '10-19', 'Emulator CRUD Verification', '150.0', '0', this)" title="删除此行记录">🗑️ 删除</button></td></tr>
 <tr><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="col-act"></td></tr>
 <tr><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="col-act"></td></tr>
 </tbody></table>
@@ -355,6 +356,14 @@ html, body { background: none; }
 </div>
 </div>
 <script>
+(function() {
+  try {
+    var u = JSON.parse(localStorage.getItem('currentUser') || 'null');
+    if (u && u.role && u.role !== 'admin') {
+      window.location.replace('/app?tab=entry');
+    }
+  } catch (e) {}
+})();
 async function deleteEntry(year, month, dateStr, item, income, expense, btn) {
   var amtStr = Number(income) > 0 ? ('收入: ' + income) : (Number(expense) > 0 ? ('支出: ' + expense) : '');
   var msg = '确定要删除这条记录吗？\n\n' +

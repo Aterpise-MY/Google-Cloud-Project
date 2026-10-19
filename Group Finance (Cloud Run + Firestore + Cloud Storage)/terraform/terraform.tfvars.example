@@ -2,9 +2,6 @@
 project_id = "group-511516"
 region     = "asia-southeast1"
 
-# Web-app (/exec) URL from Google Apps Script (Deploy > Manage deployments)
-apps_script_url = "https://script.google.com/macros/s/AKfycbyTZAyshSlMEaITGfXx4yJBmSCr9_A00YHWjdwVMK5rECxG7iTLHqNuumoV-Nt5gb-kQg/exec"
-
 # Optional: Netlify JWS secret token for webhook verification
 # netlify_jws_secret = "your-netlify-jws-secret"
 
@@ -21,6 +18,15 @@ enable_custom_domain_mapping = false
 # Optional: booklet login password. Leave unset to have Terraform generate one
 # (read it with: terraform output -raw booklet_password)
 # booklet_password = "..."
+
+# Optional: Google OAuth 2.0 Client ID and Client Secret for Google Account login
+# Stored in Secret Manager (ledger-google-oauth-client-id / ledger-google-oauth-client-secret)
+# google_oauth_client_id     = "your-client-id.apps.googleusercontent.com"
+# google_oauth_client_secret = "your-client-secret"
+
+# Optional: Cloud CDN URL map invalidation on Firestore / site bucket updates
+# enable_cloud_cdn = false
+# cdn_url_map      = ""
 
 # GitHub Actions deployer trust (defaults shown). Trust is pinned to the numeric repository id.
 # github_repository    = "Brendon20011007/Google-Cloud-Project"

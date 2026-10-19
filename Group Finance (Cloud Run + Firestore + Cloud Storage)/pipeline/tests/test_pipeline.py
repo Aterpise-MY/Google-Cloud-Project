@@ -612,7 +612,10 @@ class BookletAuthTests(unittest.TestCase):
     def setUp(self):
         from unittest.mock import MagicMock, patch
         # booklet auth never touches Firestore; stub it so no GCP client (or metadata probe) is created
-        patcher = patch("ledger_pipeline.service.FirestoreLedgerDB", MagicMock())
+        mock_db = MagicMock()
+        mock_db.verify_user.return_value = False
+        mock_db.is_admin_user.return_value = False
+        patcher = patch("ledger_pipeline.service.FirestoreLedgerDB", return_value=mock_db)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.tmp = tempfile.TemporaryDirectory()
@@ -768,19 +771,62 @@ class FirestoreAndAdminTests(unittest.TestCase):
         self.db = FirestoreLedgerDB()
 
     def test_admin_user_verification(self):
-        self.assertFalse(self.db.is_admin_user("admin@groupfinance.com"))
-        user = self.db.add_admin_user("admin@groupfinance.com", name="Lead Admin")
+        # Default active admins
+        self.assertTrue(self.db.is_admin_user("admin@group.finance.com"))
+        self.assertTrue(self.db.is_admin_user("admin@groupfinance.com"))
+        self.assertTrue(self.db.is_admin_user("brendon.ang20011007@gmail.com"))
+        # Case insensitive & whitespace trimmed
+        self.assertTrue(self.db.is_admin_user(" ADMIN@GROUP.FINANCE.COM "))
+        self.assertTrue(self.db.is_admin_user(" ADMIN@GROUPFINANCE.COM "))
+
+        # Non-admin user returns False
+        self.assertFalse(self.db.is_admin_user("unknown@groupfinance.com"))
+        # Add new admin user
+        user = self.db.add_admin_user("newadmin@groupfinance.com", name="Lead Admin")
         self.assertEqual(user["role"], "admin")
         self.assertEqual(user["status"], "active")
-        self.assertTrue(self.db.is_admin_user("admin@groupfinance.com"))
-        # Case insensitive & whitespace trimmed
-        self.assertTrue(self.db.is_admin_user(" ADMIN@GROUPFINANCE.COM "))
+        self.assertTrue(self.db.is_admin_user("newadmin@groupfinance.com"))
         # Inactive user
         inactive = self.db.add_admin_user("inactive@groupfinance.com")
         inactive["status"] = "inactive"
         self.assertFalse(self.db.is_admin_user("inactive@groupfinance.com"))
         # Empty email
         self.assertFalse(self.db.is_admin_user(""))
+
+    def test_admin_group_finance_booklet_and_verification(self):
+        # 1. Assert db.is_admin_user("admin@group.finance.com") is True
+        self.assertTrue(self.db.is_admin_user("admin@group.finance.com"))
+        self.assertTrue(self.db.verify_user("admin@group.finance.com", "Abc1234#"))
+
+        # 2. Assert booklet login succeeds with admin@group.finance.com
+        from ledger_pipeline.service import create_app
+        from ledger_pipeline.sources import FirestoreSource
+        with tempfile.TemporaryDirectory() as td:
+            s = Settings(pipeline_token="test-secret", booklet_password="configured-pw")
+            source = FirestoreSource(self.db, opening_balance=693)
+            storage = LocalStorage(td)
+            p = Pipeline(s, source, storage, pdf=lambda h: h.encode("utf-8"), invalidate=lambda: None)
+            app = create_app(s, pipeline=p, db=self.db)
+            c = app.test_client()
+
+            # Booklet login with booklet_password
+            r_post1 = c.post("/booklet", data={"username": "admin@group.finance.com", "password": "configured-pw"})
+            self.assertEqual(r_post1.status_code, 302)
+            set_cookies1 = r_post1.headers.getlist("Set-Cookie")
+            self.assertTrue(any("booklet_auth=" in sc for sc in set_cookies1))
+            self.assertTrue(any("admin_auth=" in sc for sc in set_cookies1))
+
+            # Subsequent GET succeeds without re-login
+            r_get = c.get("/booklet")
+            self.assertNotIn("请输入授权账号与密码", r_get.get_data(as_text=True))
+
+            # Booklet login with default admin password (Abc1234#)
+            c.delete_cookie("booklet_auth")
+            c.delete_cookie("admin_auth")
+            r_post2 = c.post("/booklet", data={"username": "admin@group.finance.com", "password": "Abc1234#"})
+            self.assertEqual(r_post2.status_code, 302)
+            set_cookies2 = r_post2.headers.getlist("Set-Cookie")
+            self.assertTrue(any("admin_auth=" in sc for sc in set_cookies2))
 
     def test_firestore_crud_transactions(self):
         t1 = self.db.add_transaction(date_str="2026-08-13", item="奉献", income=100.0, expense=0.0, balance=598.0)
@@ -868,6 +914,17 @@ class FirestoreAndAdminTests(unittest.TestCase):
         self.assertEqual(data["user"]["email"], "admin@groupfinance.com")
         self.assertEqual(data["user"]["role"], "admin")
         self.assertIn("admin_auth=", r.headers.get("Set-Cookie", ""))
+
+        # Verify admin@ebteq.desk is whitelisted by default
+        r_ebteq = c.post("/api", json={"action": "google_login", "credential": "test-admin-token",
+                                       "email": "admin@ebteq.desk"})
+        self.assertEqual(r_ebteq.status_code, 200)
+        self.assertEqual(r_ebteq.get_json()["user"]["email"], "admin@ebteq.desk")
+
+        # Verify /app route serves the application
+        r_app = c.get("/app")
+        self.assertEqual(r_app.status_code, 200)
+        self.assertIn(b"index-Chv3jFTT.js", r_app.data)
 
     def test_api_list_update_delete_autopublish(self):
         from ledger_pipeline.service import create_app
@@ -977,8 +1034,360 @@ class FirestoreAndAdminTests(unittest.TestCase):
             self.assertEqual(len(queried), 1)
             self.assertEqual(queried[0]["item"], "小组奉献")
 
+    def test_settings_and_booklet_metadata(self):
+        from ledger_pipeline.service import create_app
+        from ledger_pipeline.sources import FirestoreSource
+        with tempfile.TemporaryDirectory() as td:
+            s = Settings(pipeline_token="test-secret")
+            source = FirestoreSource(self.db, opening_balance=693)
+            storage = LocalStorage(td)
+            p = Pipeline(s, source, storage, pdf=lambda h: h.encode("utf-8"), invalidate=lambda: None)
+            app = create_app(s, pipeline=p, db=self.db)
+            c = app.test_client()
+
+            # 1. Get default settings
+            r1 = c.post("/api", json={"action": "get_settings"})
+            self.assertEqual(r1.status_code, 200)
+            d1 = r1.get_json()
+            self.assertEqual(d1["status"], "success")
+            self.assertIn("小组聚会（教会）", d1["settings"]["income_items"])
+            self.assertIn("转回给教会", d1["settings"]["expense_items"])
+            self.assertEqual(d1["settings"]["booklet"]["group_code"], "YA5")
+
+            # 2. Update settings
+            r2 = c.post("/api", json={
+                "action": "update_settings",
+                "income_items": ["自定义奉献A", "自定义奉献B"],
+                "expense_items": ["自定义支出X"],
+                "booklet": {
+                    "group_code": "YA8",
+                    "counters": "Alice, Bob",
+                    "verify_by": "Pastor John",
+                    "verify_name": "Alice",
+                },
+            })
+            self.assertEqual(r2.status_code, 200)
+            d2 = r2.get_json()
+            self.assertEqual(d2["status"], "success")
+            self.assertEqual(d2["settings"]["income_items"], ["自定义奉献A", "自定义奉献B"])
+            self.assertEqual(d2["settings"]["expense_items"], ["自定义支出X"])
+            self.assertEqual(d2["settings"]["booklet"]["group_code"], "YA8")
+            self.assertEqual(d2["settings"]["booklet"]["counters"], "Alice, Bob")
+            self.assertEqual(s.verify_by, "Pastor John")
+            self.assertEqual(s.verify_name, "Alice")
+
+            # 3. Verify FirestoreSource uses updated booklet metadata
+            self.db.add_transaction(date_str="2026-08-13", item="自定义奉献A", income=100.0, expense=0.0, balance=793.0)
+            sheets = source.load()
+            self.assertEqual(sheets["Aug 2026"].group_id, "YA8")
+            self.assertEqual(sheets["Aug 2026"].workers, "Alice, Bob")
+
+    def test_user_roles_and_rbac_redirect(self):
+        from ledger_pipeline.service import create_app
+        from ledger_pipeline.sources import FirestoreSource
+        with tempfile.TemporaryDirectory() as td:
+            s = Settings(pipeline_token="test-secret", booklet_password="configured-pw")
+            source = FirestoreSource(self.db, opening_balance=693)
+            storage = LocalStorage(td)
+            p = Pipeline(s, source, storage, pdf=lambda h: h.encode("utf-8"), invalidate=lambda: None)
+            app = create_app(s, pipeline=p, db=self.db)
+            c = app.test_client()
+
+            # 1. List users includes default admins and standard users
+            r_list = c.post("/api", json={"action": "list_users"})
+            self.assertEqual(r_list.status_code, 200)
+            users = r_list.get_json()["users"]
+            emails = {u["email"]: u["role"] for u in users}
+            self.assertEqual(emails.get("admin@group.finance.com"), "admin")
+            self.assertEqual(emails.get("rivaldo@group.finance.com"), "user")
+            self.assertEqual(emails.get("user@group.finance.com"), "user")
+
+            # 2. Standard user login via google_login
+            r_user_login = c.post("/api", json={
+                "action": "google_login",
+                "credential": "test-user-token",
+                "email": "rivaldo@group.finance.com",
+            })
+            self.assertEqual(r_user_login.status_code, 200)
+            login_data = r_user_login.get_json()
+            self.assertEqual(login_data["user"]["role"], "user")
+            self.assertTrue(login_data["token"].startswith("user-session-"))
+
+            # 3. Standard user with user_role=user cookie is redirected from /booklet to /app?tab=entry
+            c.set_cookie("user_role", "user")
+            r_booklet = c.get("/booklet")
+            self.assertEqual(r_booklet.status_code, 302)
+            self.assertTrue(r_booklet.headers["Location"].endswith("/app?tab=entry"))
+
+            # 4. Promote standard user to admin via update_user_role
+            r_promote = c.post("/api", json={
+                "action": "update_user_role",
+                "email": "rivaldo@group.finance.com",
+                "role": "admin",
+                "name": "Rivaldo Lead",
+            })
+            self.assertEqual(r_promote.status_code, 200)
+            self.assertEqual(r_promote.get_json()["user"]["role"], "admin")
+            self.assertTrue(self.db.is_admin_user("rivaldo@group.finance.com"))
+
+            # 5. Demote back to user
+            r_demote = c.post("/api", json={
+                "action": "update_user_role",
+                "email": "rivaldo@group.finance.com",
+                "role": "user",
+            })
+            self.assertEqual(r_demote.status_code, 200)
+            self.assertEqual(r_demote.get_json()["user"]["role"], "user")
+            self.assertFalse(self.db.is_admin_user("rivaldo@group.finance.com"))
+
+    def test_get_booklet_data(self):
+        from ledger_pipeline.service import create_app
+        from ledger_pipeline.sources import FirestoreSource
+        with tempfile.TemporaryDirectory() as td:
+            s = Settings(pipeline_token="test-secret", opening_balance=Decimal(500))
+            self.db.add_transaction(date_str="2026-08-13", item="八月奉献", income=100.0, expense=0.0, balance=600.0)
+            self.db.add_transaction(date_str="2026-09-05", item="九月茶点", income=0.0, expense=40.0, balance=560.0)
+
+            source = FirestoreSource(self.db, opening_balance=500)
+            storage = LocalStorage(td)
+            p = Pipeline(s, source, storage, pdf=lambda h: h.encode("utf-8"), invalidate=lambda: None, now=at(2026, 10, 14))
+            app = create_app(s, pipeline=p, db=self.db)
+            c = app.test_client()
+
+            r = c.post("/api", json={"action": "get_booklet_data", "year": 2026})
+            self.assertEqual(r.status_code, 200)
+            payload = r.get_json()
+            self.assertEqual(payload["status"], "success")
+            self.assertEqual(payload["year"], 2026)
+            self.assertEqual(len(payload["months"]), 12)
+
+            aug = payload["months"][7]  # month 8
+            sep = payload["months"][8]  # month 9
+            octo = payload["months"][9] # month 10
+            self.assertEqual(aug["month"], 8)
+            self.assertEqual(aug["opening"], 500.0)
+            self.assertEqual(aug["closing"], 600.0)
+            self.assertEqual(len(aug["entries"]), 1)
+            self.assertEqual(aug["entries"][0]["short_date"], "08-13")
+            self.assertEqual(aug["entries"][0]["balance"], 600.0)
+
+            self.assertEqual(sep["month"], 9)
+            self.assertEqual(sep["opening"], 600.0)
+            self.assertEqual(sep["closing"], 560.0)
+            self.assertEqual(len(sep["entries"]), 1)
+            self.assertEqual(sep["entries"][0]["expense"], 40.0)
+
+            self.assertEqual(octo["month"], 10)
+            self.assertEqual(octo["opening"], 560.0)
+            self.assertEqual(octo["closing"], 560.0)
+
+    def test_full_crud_lifecycle_and_get_api(self):
+        from ledger_pipeline.service import create_app
+        from ledger_pipeline.sources import FirestoreSource
+        with tempfile.TemporaryDirectory() as td:
+            s = Settings(pipeline_token="test-secret", opening_balance=Decimal(693))
+            source = FirestoreSource(self.db, opening_balance=693)
+            storage = LocalStorage(td)
+            p = Pipeline(s, source, storage, pdf=lambda h: h.encode("utf-8"), invalidate=lambda: None, now=at(2026, 10, 14))
+            app = create_app(s, pipeline=p, db=self.db)
+            c = app.test_client()
+
+            # 1. GET /api?action=status
+            r_status = c.get("/api?action=status")
+            self.assertEqual(r_status.status_code, 200)
+            st_data = r_status.get_json()
+            self.assertEqual(st_data["status"], "ok")
+            self.assertIn(st_data["db_mode"], ("memory", "emulator", "firestore"))
+
+            # 2. Create (add_record)
+            r_add1 = c.post("/api", json={
+                "action": "add_record",
+                "date": "2026-01-14",
+                "item": "小组聚会（教会）",
+                "income": 79.0,
+                "expense": 0.0,
+                "user": "admin@group.finance.com",
+            })
+            self.assertEqual(r_add1.status_code, 200)
+            add1_json = r_add1.get_json()
+            self.assertEqual(add1_json["status"], "success")
+            tx1_id = add1_json["id"]
+            self.assertTrue(bool(tx1_id))
+            self.assertEqual(add1_json["transaction"]["item"], "小组聚会（教会）")
+
+            r_add2 = c.post("/api", json={
+                "action": "add_record",
+                "date": "2026-01-21",
+                "item": "生日蛋糕一月",
+                "income": 0.0,
+                "expense": 60.0,
+                "user": "admin@group.finance.com",
+            })
+            self.assertEqual(r_add2.status_code, 200)
+            tx2_id = r_add2.get_json()["id"]
+
+            # 3. Read single (get_record via POST and GET)
+            r_get = c.get(f"/api?action=get_record&id={tx1_id}")
+            self.assertEqual(r_get.status_code, 200)
+            self.assertEqual(r_get.get_json()["transaction"]["id"], tx1_id)
+            self.assertEqual(r_get.get_json()["transaction"]["income"], 79.0)
+
+            # 4. Read list (GET /api?action=list_transactions&year=2026) with running balances
+            r_list = c.get("/api?action=list_transactions&year=2026")
+            self.assertEqual(r_list.status_code, 200)
+            list_txs = r_list.get_json()["transactions"]
+            self.assertEqual(len(list_txs), 2)
+            self.assertEqual(list_txs[0]["balance"], 772.0)  # 693 + 79
+            self.assertEqual(list_txs[0]["shortDate"], "01-14")
+            self.assertEqual(list_txs[1]["balance"], 712.0)  # 772 - 60
+            self.assertEqual(list_txs[1]["shortDate"], "01-21")
+
+            # 5. Update (update_record)
+            r_upd = c.post("/api", json={
+                "action": "update_record",
+                "id": tx2_id,
+                "date": "2026-01-22",
+                "item": "生日蛋糕一月（更新）",
+                "income": 0.0,
+                "expense": 50.0,
+            })
+            self.assertEqual(r_upd.status_code, 200)
+            upd_json = r_upd.get_json()
+            self.assertEqual(upd_json["id"], tx2_id)
+            self.assertEqual(upd_json["transaction"]["item"], "生日蛋糕一月（更新）")
+            self.assertEqual(upd_json["transaction"]["expense"], 50.0)
+
+            # Verify running balance recalculated after update
+            r_list2 = c.post("/api", json={"action": "list_transactions", "year": 2026})
+            txs2 = r_list2.get_json()["transactions"]
+            self.assertEqual(txs2[1]["balance"], 722.0)  # 772 - 50
+            self.assertEqual(txs2[1]["shortDate"], "01-22")
+
+            # 6. Delete (delete_record by id only)
+            r_del = c.post("/api", json={"action": "delete_record", "id": tx2_id})
+            self.assertEqual(r_del.status_code, 200)
+            self.assertTrue(r_del.get_json()["deleted"])
+            self.assertEqual(c.get(f"/api?action=get_record&id={tx2_id}").status_code, 404)
+            self.assertEqual(len(c.get("/api?action=list_transactions&year=2026").get_json()["transactions"]), 1)
+
+    def test_ensure_seeded_canonical_transactions(self):
+        from ledger_pipeline.sources import FirestoreSource
+        seeded_count = self.db.ensure_seeded()
+        self.assertEqual(seeded_count, 26)
+        # Re-running ensure_seeded when non-empty does not duplicate
+        self.assertEqual(self.db.ensure_seeded(), 0)
+        all_txs = self.db.query_transactions(year=2026, limit=None)
+        self.assertEqual(len(all_txs), 26)
+
+        source = FirestoreSource(self.db, opening_balance=693)
+        ms = build_months(source.load(), upto=(2026, 9))
+        want = {1: 512, 2: 452, 3: 598, 4: 610, 5: 660, 6: 710, 7: 498, 8: 588, 9: 319}
+        self.assertEqual({m: int(ms[(2026, m)].closing) for m in want}, want)
+
+    def test_google_oauth_config_and_callback_flow(self):
+        from unittest.mock import MagicMock, patch
+        from ledger_pipeline.service import create_app
+
+        # 1. Settings.from_env reads GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and ignores placeholders
+        s_placeholder = Settings.from_env({
+            "GOOGLE_CLIENT_ID": "UNCONFIGURED",
+            "GOOGLE_CLIENT_SECRET": "PLACEHOLDER_SET_IN_SECRET_MANAGER",
+        })
+        self.assertEqual(s_placeholder.google_client_id, "")
+        self.assertEqual(s_placeholder.google_client_secret, "")
+
+        s_real = Settings.from_env({
+            "GOOGLE_CLIENT_ID": "12345-abc.apps.googleusercontent.com",
+            "GOOGLE_CLIENT_SECRET": "test-oauth-sec",
+            "PIPELINE_TOKEN": "test-tok",
+        })
+        self.assertEqual(s_real.google_client_id, "12345-abc.apps.googleusercontent.com")
+        self.assertEqual(s_real.google_client_secret, "test-oauth-sec")
+        self.assertNotIn("test-oauth-sec", repr(s_real))
+
+        app = create_app(s_real, db=self.db)
+        c = app.test_client()
+
+        # 2. /api status and get_settings expose google_client_id & google_oauth_enabled
+        r_st = c.get("/api?action=status")
+        self.assertEqual(r_st.get_json()["google_client_id"], "12345-abc.apps.googleusercontent.com")
+        self.assertTrue(r_st.get_json()["google_oauth_enabled"])
+
+        # 3. /auth/google/login redirects to accounts.google.com with client_id and redirect_uri
+        r_login = c.get("/auth/google/login", headers={"X-Forwarded-Proto": "https", "Host": "finance.example.com"})
+        self.assertEqual(r_login.status_code, 302)
+        loc = r_login.headers["Location"]
+        self.assertIn("https://accounts.google.com/o/oauth2/v2/auth", loc)
+        self.assertIn("client_id=12345-abc.apps.googleusercontent.com", loc)
+        self.assertIn("redirect_uri=https%3A%2F%2Ffinance.example.com%2Fauth%2Fgoogle%2Fcallback", loc)
+
+        # 4. /auth/google/callback exchanges code, logs in admin or user, sets cookies and localStorage
+        fake_token_resp = MagicMock()
+        fake_token_resp.ok = True
+        fake_token_resp.content = b'{"access_token": "test-access-tok", "id_token": "fake.jwt.token"}'
+        fake_token_resp.json.return_value = {"access_token": "test-access-tok", "id_token": "fake.jwt.token"}
+
+        with patch("requests.post", return_value=fake_token_resp) as mock_post:
+            with patch("google.oauth2.id_token.verify_oauth2_token", return_value={
+                "email": "brendon.ang20011007@gmail.com",
+                "name": "Brendon Ang",
+            }):
+                r_cb = c.get("/auth/google/callback?code=auth-code-xyz")
+                self.assertEqual(r_cb.status_code, 200)
+                html = r_cb.get_data(as_text=True)
+                self.assertIn("localStorage.setItem(\"authToken\"", html)
+                self.assertIn("brendon.ang20011007@gmail.com", html)
+                self.assertIn("\"role\": \"admin\"", html)
+                cookies = r_cb.headers.getlist("Set-Cookie")
+                self.assertTrue(any("admin_auth=session-" in ck for ck in cookies))
+                self.assertTrue(any("user_role=admin" in ck for ck in cookies))
+                mock_post.assert_called_once()
+
+        # Standard user callback auto-registers and sets user_role=user
+        with patch("requests.post", return_value=fake_token_resp):
+            with patch("google.oauth2.id_token.verify_oauth2_token", return_value={
+                "email": "newmember@gmail.com",
+                "name": "New Member",
+            }):
+                r_cb_user = c.get("/auth/google/callback?code=auth-code-user")
+                self.assertEqual(r_cb_user.status_code, 200)
+                html_u = r_cb_user.get_data(as_text=True)
+                self.assertIn("newmember@gmail.com", html_u)
+                self.assertIn("\"role\": \"user\"", html_u)
+                cookies_u = r_cb_user.headers.getlist("Set-Cookie")
+                self.assertTrue(any("user_role=user" in ck for ck in cookies_u))
+                self.assertEqual(self.db.get_user("newmember@gmail.com")["role"], "user")
+
+    def test_migrate_workbook_to_firestore_and_cdn_sync(self):
+        from scripts.migrate_xlsx_to_firestore import extract_transactions_from_raw_sheets, _write_transactions_to_db
+        from ledger_pipeline.service import build_pipeline
+
+        raw_sheets = sheets_fixture()
+        txs, booklet_meta = extract_transactions_from_raw_sheets(raw_sheets, opening_balance=498.0)
+        self.assertEqual(len(txs), 3)
+        self.assertEqual(booklet_meta.get("group_code"), "YA5")
+        self.assertEqual(booklet_meta.get("counters"), "Rivaldo, Brendon")
+        self.assertEqual(txs[0]["date"], "2026-08-13")
+        self.assertEqual(txs[0]["balance"], 588.0)
+        self.assertEqual(txs[1]["date"], "2026-09-07")
+        self.assertEqual(txs[1]["balance"], 538.0)
+        self.assertEqual(txs[2]["date"], "2026-09-09")
+        self.assertEqual(txs[2]["balance"], 658.0)
+
+        with tempfile.TemporaryDirectory() as td:
+            with unittest.mock.patch.dict(os.environ, {"SITE_DIR": td}):
+                s = Settings(pipeline_token="tok", opening_balance=Decimal(498))
+                written = _write_transactions_to_db(txs, self.db)
+                self.assertEqual(written, 3)
+                site_res = build_pipeline(s, db=self.db).publish_site()
+                self.assertEqual(site_res["status"], "ok")
+                self.assertTrue(os.path.exists(os.path.join(td, "index.html")))
+                self.assertEqual(len(self.db.query_transactions(limit=None)), 3)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
 
