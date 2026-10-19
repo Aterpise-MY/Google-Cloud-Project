@@ -71,6 +71,14 @@ class Pipeline:
     def _build(self, upto: YM) -> Dict[YM, Month]:
         try:
             raw = self.source.load()
+            if not raw:
+                xlsx_path = getattr(self.source, "path", None) or os.environ.get(
+                    "XLSX_PATH",
+                    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "小组奉献资料库_corrected.xlsx"))
+                )
+                if xlsx_path and os.path.exists(xlsx_path):
+                    from .sources import XlsxSource
+                    raw = XlsxSource(xlsx_path).load()
         except Exception as exc:
             xlsx_path = getattr(self.source, "path", None) or os.environ.get(
                 "XLSX_PATH",

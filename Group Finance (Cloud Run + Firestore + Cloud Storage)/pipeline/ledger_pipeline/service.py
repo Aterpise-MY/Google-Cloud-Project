@@ -34,7 +34,9 @@ MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oc
 # Booklet credentials come only from Settings (BOOKLET_USER / BOOKLET_PASSWORD env vars), read in
 # create_app(). There is no default password: unset/empty BOOKLET_PASSWORD disables booklet login.
 BOOKLET_COOKIE = "booklet_auth"
+ADMIN_AUTH_COOKIE = "admin_auth"
 BOOKLET_COOKIE_MAX_AGE = 2592000  # 30 days
+active_admin_tokens: set[str] = set()
 
 
 def booklet_token(user: str, password: str) -> str:
@@ -120,7 +122,13 @@ def get_xlsx_path(p: Optional[Pipeline] = None) -> Optional[str]:
 
 def safe_load_source(p: Pipeline):
     try:
-        return p.source.load()
+        data = p.source.load()
+        if not data:
+            xp = get_xlsx_path(p)
+            if xp and os.path.exists(xp):
+                from .sources import XlsxSource
+                return XlsxSource(xp).load()
+        return data
     except Exception as exc:
         xp = get_xlsx_path(p)
         if xp and os.path.exists(xp):
@@ -134,21 +142,30 @@ def build_pipeline(settings: Settings) -> Pipeline:
     from .cdn import make_invalidator
     from .pdfgen import html_to_pdf
     from .pipeline import AppsScriptDrive
-    from .sources import AppsScriptClient, AppsScriptSource, XlsxSource
+    from .sources import AppsScriptClient, AppsScriptSource, FirestoreSource, XlsxSource
     from .storage import GcsStorage, LocalStorage
+
+    db = FirestoreLedgerDB(settings.cdn_project)
+    source = None
+    try:
+        source = FirestoreSource(db, opening_balance=settings.opening_balance)
+    except Exception as exc:
+        log.warning("Could not initialize FirestoreSource: %s", exc)
 
     if not settings.bucket:
         site_dir = os.environ.get("SITE_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "preview_site")))
         site = LocalStorage(site_dir)
         private = LocalStorage(os.path.join(site_dir, "_archive"))
-        xlsx_path = os.environ.get("XLSX_PATH", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "小组奉献资料库_corrected.xlsx")))
-        source = XlsxSource(xlsx_path) if (not settings.apps_script_url and os.path.exists(xlsx_path)) else AppsScriptSource(AppsScriptClient(settings.apps_script_url, settings.pipeline_token))
+        if source is None:
+            xlsx_path = os.environ.get("XLSX_PATH", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "小组奉献资料库_corrected.xlsx")))
+            source = XlsxSource(xlsx_path) if (not settings.apps_script_url and os.path.exists(xlsx_path)) else AppsScriptSource(AppsScriptClient(settings.apps_script_url, settings.pipeline_token))
         return Pipeline(settings, source, site, private=private, drive=None, pdf=lambda h: h.encode("utf-8"), invalidate=lambda: None)
 
     client = AppsScriptClient(settings.apps_script_url, settings.pipeline_token)
     site = GcsStorage(settings.bucket)
     private = GcsStorage(settings.archive_bucket) if settings.archive_bucket else None
-    return Pipeline(settings, AppsScriptSource(client), site, private=private,
+    primary_source = source if source is not None else AppsScriptSource(client)
+    return Pipeline(settings, primary_source, site, private=private,
                     drive=AppsScriptDrive(client), pdf=html_to_pdf,
                     invalidate=make_invalidator(settings.cdn_project, settings.cdn_url_map))
 

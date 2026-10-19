@@ -29,6 +29,7 @@ class FirestoreLedgerDB:
         self._client = None
         self._memory_tx: List[Dict[str, Any]] = []
         self._memory_closings: Dict[str, Dict[str, Any]] = {}
+        self._memory_users: Dict[str, Dict[str, Any]] = {}
         self._init_client()
 
     def _init_client(self):
@@ -150,6 +151,115 @@ class FirestoreLedgerDB:
             return True
         return False
 
+    def delete_transaction_by_id(self, tx_id: str) -> bool:
+        """Deletes a transaction record by doc ID."""
+        if self._client:
+            try:
+                doc_ref = self._client.collection("transactions").document(tx_id)
+                doc = doc_ref.get()
+                if not doc.exists:
+                    return False
+                doc_ref.delete()
+                return True
+            except Exception as exc:
+                log.error("Failed to delete transaction %s in Firestore: %s", tx_id, exc)
+                return False
+
+        # In-memory fallback
+        for i, tx in enumerate(self._memory_tx):
+            if tx.get("id") == tx_id:
+                self._memory_tx.pop(i)
+                return True
+        return False
+
+    def update_transaction(self, tx_id: str, updates: Dict[str, Any]) -> bool:
+        """Updates a transaction record by doc ID."""
+        clean_updates = dict(updates)
+        clean_updates.pop("id", None)
+        if "date" in clean_updates:
+            parts = str(clean_updates["date"]).split("-")
+            if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                clean_updates.setdefault("year", int(parts[0]))
+                clean_updates.setdefault("month", int(parts[1]))
+        if "income" in clean_updates and clean_updates["income"] is not None:
+            clean_updates["income"] = round(float(clean_updates["income"]), 2)
+        if "expense" in clean_updates and clean_updates["expense"] is not None:
+            clean_updates["expense"] = round(float(clean_updates["expense"]), 2)
+        if "balance" in clean_updates and clean_updates["balance"] is not None:
+            clean_updates["balance"] = round(float(clean_updates["balance"]), 2)
+
+        if self._client:
+            try:
+                doc_ref = self._client.collection("transactions").document(tx_id)
+                doc = doc_ref.get()
+                if not doc.exists:
+                    return False
+                doc_ref.update(clean_updates)
+                return True
+            except Exception as exc:
+                log.error("Failed to update transaction %s in Firestore: %s", tx_id, exc)
+                return False
+
+        # In-memory fallback
+        for tx in self._memory_tx:
+            if tx.get("id") == tx_id:
+                tx.update(clean_updates)
+                return True
+        return False
+
+    def query_transactions(self, year: Optional[int] = None, month: Optional[int] = None,
+                           search: Optional[str] = None, limit: Optional[int] = 200) -> List[Dict[str, Any]]:
+        """Queries transaction records including doc id, date, item, income, expense, balance, user."""
+        if self._client:
+            try:
+                col = self._client.collection("transactions")
+                query = col
+                if year is not None:
+                    query = query.where("year", "==", int(year))
+                if month is not None:
+                    query = query.where("month", "==", int(month))
+                docs = query.stream()
+                results = []
+                for d in docs:
+                    t = d.to_dict() or {}
+                    t["id"] = d.id
+                    if search:
+                        s = str(search).lower().strip()
+                        item_str = str(t.get("item", "")).lower()
+                        user_str = str(t.get("user", "")).lower()
+                        date_str = str(t.get("date", "")).lower()
+                        if s not in item_str and s not in user_str and s not in date_str:
+                            continue
+                    results.append(t)
+                results.sort(key=lambda x: (str(x.get("date", "")), str(x.get("created_at", ""))))
+                if limit is not None and limit > 0:
+                    return results[:limit]
+                return results
+            except Exception as exc:
+                log.warning("Firestore query_transactions error: %s", exc)
+
+        # In-memory fallback
+        results = []
+        for tx in self._memory_tx:
+            if year is not None and tx.get("year") != int(year):
+                continue
+            if month is not None and tx.get("month") != int(month):
+                continue
+            if search:
+                s = str(search).lower().strip()
+                item_str = str(tx.get("item", "")).lower()
+                user_str = str(tx.get("user", "")).lower()
+                date_str = str(tx.get("date", "")).lower()
+                if s not in item_str and s not in user_str and s not in date_str:
+                    continue
+            t = dict(tx)
+            results.append(t)
+
+        results.sort(key=lambda x: (str(x.get("date", "")), str(x.get("created_at", ""))))
+        if limit is not None and limit > 0:
+            return results[:limit]
+        return results
+
     def record_month_closing(self, ym_str: str, closing_data: Dict[str, Any]) -> None:
         """Saves month-end closing state to Firestore collection 'monthly_closings'."""
         if self._client:
@@ -179,3 +289,52 @@ class FirestoreLedgerDB:
             if password == "Abc1234#" or target_hash == "778f21dfa476222f26f95f47da9b080c1c991d121a659598e9a643487f9f5110":
                 return True
         return False
+
+    def is_admin_user(self, email: str) -> bool:
+        """Checks if user document in collection 'users' has doc.get('role') == 'admin' and status == 'active'."""
+        if not email:
+            return False
+        clean_email = email.lower().strip()
+        if self._client:
+            try:
+                doc = self._client.collection("users").document(clean_email).get()
+                if doc.exists:
+                    data = doc.to_dict() or {}
+                    return data.get("role") == "admin" and data.get("status") == "active"
+                docs = self._client.collection("users").where("email", "==", clean_email).limit(1).stream()
+                for d in docs:
+                    data = d.to_dict() or {}
+                    return data.get("role") == "admin" and data.get("status") == "active"
+            except Exception as exc:
+                log.warning("Firestore is_admin_user lookup failed: %s", exc)
+
+        # In-memory store fallback
+        user = self._memory_users.get(clean_email)
+        if user:
+            return user.get("role") == "admin" and user.get("status") == "active"
+        for u in self._memory_users.values():
+            if str(u.get("email", "")).lower().strip() == clean_email:
+                return u.get("role") == "admin" and u.get("status") == "active"
+        return False
+
+    def add_admin_user(self, email: str, name: str = "", role: str = "admin") -> Dict[str, Any]:
+        """Seeds or manages admin user document in collection 'users'."""
+        clean_email = email.lower().strip()
+        tz = ZoneInfo("Asia/Kuala_Lumpur")
+        now = datetime.now(tz)
+        user_data = {
+            "email": clean_email,
+            "name": name or clean_email.split("@")[0],
+            "role": role,
+            "status": "active",
+            "created_at": now.isoformat(),
+        }
+        if self._client:
+            try:
+                self._client.collection("users").document(clean_email).set(user_data, merge=True)
+            except Exception as exc:
+                log.error("Failed to add admin user to Firestore: %s", exc)
+
+        self._memory_users[clean_email] = user_data
+        return user_data
+
