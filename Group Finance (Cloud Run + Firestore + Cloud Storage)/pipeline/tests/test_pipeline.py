@@ -947,6 +947,37 @@ class FirestoreAndAdminTests(unittest.TestCase):
             r_bearer = c.get("/booklet", headers={"Authorization": "Bearer session-test-bearer-12345"})
             self.assertNotIn("请输入授权账号与密码", r_bearer.get_data(as_text=True))
 
+    def test_migration_script(self):
+        import openpyxl
+        from scripts.migrate_xlsx_to_firestore import extract_transactions_from_workbook, migrate_xlsx_to_firestore
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "test_wb.xlsx")
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Aug 2026"
+            ws["B1"] = "YA5"
+            ws["B2"] = "Rivaldo, Brendon"
+            ws["E5"] = 498
+            ws.cell(6, 1, "2026-08-13")
+            ws.cell(6, 2, "小组奉献")
+            ws.cell(6, 3, 90)
+            ws.cell(6, 4, 0)
+            ws.cell(6, 5, 588)
+            wb.save(path)
+
+            txs = extract_transactions_from_workbook(path)
+            self.assertEqual(len(txs), 1)
+            self.assertEqual(txs[0]["item"], "小组奉献")
+            self.assertEqual(txs[0]["income"], 90.0)
+
+            res = migrate_xlsx_to_firestore(path, db=self.db)
+            self.assertEqual(res["status"], "ok")
+            self.assertEqual(res["transactions_migrated"], 1)
+            queried = self.db.query_transactions(year=2026, month=8)
+            self.assertEqual(len(queried), 1)
+            self.assertEqual(queried[0]["item"], "小组奉献")
+
+
 
 if __name__ == "__main__":
     unittest.main()
