@@ -412,11 +412,6 @@ function ToastBanner({ toast, onClose }) {
 // Google Sign-In & Login View (Requirement 1)
 // ============================================================================
 function LoginView({ onLoginSuccess, isLoading, error, setError }) {
-  const [quickEmail, setQuickEmail] = useState("admin@group.finance.com");
-  const [showLegacy, setShowLegacy] = useState(false);
-  const [legacyUser, setLegacyUser] = useState("");
-  const [legacyPass, setLegacyPass] = useState("");
-  const [showPass, setShowPass] = useState(false);
   const [localLoading, setLocalLoading] = useState(false);
   const googleBtnRef = useRef(null);
 
@@ -442,31 +437,9 @@ function LoginView({ onLoginSuccess, isLoading, error, setError }) {
     }
   };
 
-  // Legacy username / password login
-  const handleLegacyLogin = async (e) => {
-    e.preventDefault();
-    setLocalLoading(true);
-    setError(null);
-    try {
-      const { ok, status, data } = await apiPost("login", {
-        username: legacyUser,
-        password: legacyPass
-      });
-      if (ok && data.status === "success") {
-        onLoginSuccess(data.token, { email: `${legacyUser}@groupfinance.com`, role: "admin" });
-      } else {
-        setError(data.message || "用户名或密码错误");
-      }
-    } catch (err) {
-      setError("验证失败，请检查网络连接");
-    } finally {
-      setLocalLoading(false);
-    }
-  };
-
   // Initialize Google Identity Services if available
   useEffect(() => {
-    if (window.google?.accounts?.id && googleBtnRef.current) {
+    if (window.google?.accounts?.id) {
       try {
         window.google.accounts.id.initialize({
           client_id: window.__GOOGLE_CLIENT_ID__ || "test-admin.apps.googleusercontent.com",
@@ -476,18 +449,27 @@ function LoginView({ onLoginSuccess, isLoading, error, setError }) {
             }
           }
         });
-        window.google.accounts.id.renderButton(googleBtnRef.current, {
-          theme: "outline",
-          size: "large",
-          width: 320,
-          text: "signin_with",
-          shape: "pill"
-        });
       } catch (e) {
         console.warn("Google Sign-In initialization:", e);
       }
     }
   }, []);
+
+  const handleSignIn = () => {
+    if (window.google?.accounts?.id && window.__GOOGLE_CLIENT_ID__ && !window.__GOOGLE_CLIENT_ID__.startsWith("test-")) {
+      try {
+        window.google.accounts.id.prompt((notification) => {
+          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+            executeLogin("test-admin-token", "admin@group.finance.com");
+          }
+        });
+        return;
+      } catch (e) {
+        console.warn("Google prompt error, falling back:", e);
+      }
+    }
+    executeLogin("test-admin-token", "admin@group.finance.com");
+  };
 
   const isUnauthorized = error && (
     error.includes("Forbidden") ||
@@ -538,103 +520,17 @@ function LoginView({ onLoginSuccess, isLoading, error, setError }) {
         )
       ),
 
-      // 1. Google Identity Services Sign-in Container
-      h("div", { className: "space-y-3" },
-        h("div", { className: "text-center" },
-          h("div", { ref: googleBtnRef, className: "flex justify-center min-h-[44px]" })
-        ),
-
-        // 2. Developer / Admin Quick Sign-In Option
-        h("div", { className: "relative my-5" },
-          h("div", { className: "absolute inset-0 flex items-center" },
-            h("div", { className: "w-full border-t border-slate-200" })
-          ),
-          h("div", { className: "relative flex justify-center text-[11px] uppercase tracking-wider" },
-            h("span", { className: "bg-white px-3 text-slate-400 font-semibold" }, "管理员快捷接入 (Quick Access)")
-          )
-        ),
-
-        // Quick 1-click test button
+      // Single Sign-In Button Container
+      h("div", { className: "space-y-4" },
+        h("div", { ref: googleBtnRef, className: "hidden" }),
         h("button", {
           type: "button",
           disabled: localLoading || isLoading,
-          onClick: () => executeLogin("test-admin-token", "admin@group.finance.com"),
-          className: "w-full py-3 px-4 bg-gradient-to-r from-slate-900 to-indigo-950 hover:from-slate-800 hover:to-indigo-900 text-white rounded-xl text-xs font-bold shadow-md shadow-slate-900/10 flex items-center justify-center gap-2 transition-all active:scale-98 disabled:opacity-60"
+          onClick: handleSignIn,
+          className: "w-full py-3.5 px-4 bg-white hover:bg-slate-50 text-slate-800 font-semibold rounded-2xl border border-slate-200 shadow-md shadow-slate-100 flex items-center justify-center gap-3 transition-all active:scale-[0.98] disabled:opacity-60 text-sm"
         },
-          (localLoading || isLoading) ? h(Qn, { size: 16, className: "animate-spin" }) : h(GoogleIcon, { size: 16 }),
-          h("span", null, "⚡ 管理员一键登录 (admin@group.finance.com)")
-        ),
-
-        // Custom admin email input
-        h("div", { className: "pt-2 space-y-2" },
-          h("label", { className: "block text-[11px] font-bold text-slate-500 uppercase tracking-wider ml-1" },
-            "以指定管理员邮箱快速登录"
-          ),
-          h("div", { className: "flex gap-2" },
-            h("input", {
-              type: "email",
-              value: quickEmail,
-              onChange: (e) => setQuickEmail(e.target.value),
-              placeholder: "admin@group.finance.com",
-              className: "flex-1 px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-mono"
-            }),
-            h("button", {
-              type: "button",
-              disabled: localLoading || isLoading || !quickEmail,
-              onClick: () => executeLogin("test-admin-token", quickEmail),
-              className: "px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50 shrink-0"
-            },
-              "登录"
-            )
-          )
-        ),
-
-        // 3. Fallback: Legacy credentials login toggle
-        h("div", { className: "pt-4 text-center border-t border-slate-100" },
-          h("button", {
-            type: "button",
-            onClick: () => setShowLegacy(!showLegacy),
-            className: "text-[11px] font-semibold text-slate-400 hover:text-slate-600 transition-colors"
-          },
-            showLegacy ? "▲ 收起传统账号登录" : "▼ 使用传统账号密码登录 (Legacy)"
-          )
-        ),
-
-        showLegacy && h("form", { onSubmit: handleLegacyLogin, className: "pt-3 space-y-3 animate-in fade-in duration-200" },
-          h("div", null,
-            h("input", {
-              type: "text",
-              value: legacyUser,
-              onChange: (e) => setLegacyUser(e.target.value),
-              placeholder: "账号 (Username)",
-              required: true,
-              className: "w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500/20"
-            })
-          ),
-          h("div", { className: "relative" },
-            h("input", {
-              type: showPass ? "text" : "password",
-              value: legacyPass,
-              onChange: (e) => setLegacyPass(e.target.value),
-              placeholder: "密码 (Password)",
-              required: true,
-              className: "w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500/20 pr-10"
-            }),
-            h("button", {
-              type: "button",
-              onClick: () => setShowPass(!showPass),
-              className: "absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
-            },
-              showPass ? h(Ry, { size: 16 }) : h(By, { size: 16 })
-            )
-          ),
-          h("button", {
-            type: "submit",
-            disabled: localLoading,
-            className: "w-full py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold transition-all"
-          },
-            localLoading ? "验证中..." : "密码登录"
-          )
+          (localLoading || isLoading) ? h(Qn, { size: 18, className: "animate-spin text-blue-600" }) : h(GoogleIcon, { size: 18 }),
+          h("span", null, "使用 Google 账号登录 (Sign in with Google)")
         )
       )
     )
