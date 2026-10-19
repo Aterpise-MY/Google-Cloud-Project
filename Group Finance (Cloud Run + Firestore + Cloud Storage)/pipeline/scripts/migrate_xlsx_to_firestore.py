@@ -21,7 +21,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from ledger_pipeline.config import Settings
 from ledger_pipeline.firestore_db import FirestoreLedgerDB
 from ledger_pipeline.ledger import parse_date, parse_money, parse_sheet_name
-from ledger_pipeline.sources import AppsScriptClient, AppsScriptSource
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("migration")
@@ -238,57 +237,6 @@ def _write_transactions_to_db(transactions: List[Dict[str, Any]], db: FirestoreL
     return written
 
 
-def migrate_sheets_to_firestore(apps_script_url: str, pipeline_token: str,
-                                db: Optional[FirestoreLedgerDB] = None,
-                                dry_run: bool = False,
-                                project_id: Optional[str] = None,
-                                seed_users: bool = True,
-                                publish_cdn: bool = False,
-                                settings: Optional[Settings] = None,
-                                client: Optional[AppsScriptClient] = None) -> Dict[str, Any]:
-    """Pulls live sheets from Google Sheets via Apps Script, writes to Firestore, and optionally publishes to CDN."""
-    app_client = client or AppsScriptClient(apps_script_url, pipeline_token)
-    source = AppsScriptSource(app_client)
-    log.info("Fetching live ledger sheets from Google Sheets via Apps Script...")
-    sheets = source.load()
-    eff_settings = settings or Settings.from_env()
-    open_bal = float(eff_settings.opening_balance) if eff_settings.opening_balance else 693.0
-    transactions, booklet_meta = extract_transactions_from_raw_sheets(sheets, opening_balance=open_bal)
-    log.info("Extracted %d transactions across %d sheets from Google Sheets.", len(transactions), len(sheets))
-
-    if dry_run:
-        return {
-            "status": "dry_run",
-            "sheets_count": len(sheets),
-            "transactions_count": len(transactions),
-            "booklet": booklet_meta,
-            "sample": transactions[:5],
-        }
-
-    db = db or FirestoreLedgerDB(project_id or eff_settings.cdn_project)
-    if seed_users and hasattr(db, "seed_default_users_and_settings"):
-        db.seed_default_users_and_settings()
-
-    if booklet_meta and hasattr(db, "update_app_settings"):
-        db.update_app_settings({"booklet": booklet_meta})
-
-    written = _write_transactions_to_db(transactions, db)
-    result: Dict[str, Any] = {
-        "status": "ok",
-        "source": "google_sheets",
-        "sheets_migrated": len(sheets),
-        "transactions_migrated": written,
-        "booklet": booklet_meta,
-    }
-
-    if publish_cdn:
-        from ledger_pipeline.service import build_pipeline
-        p = build_pipeline(eff_settings, db=db)
-        result["site"] = p.publish_site()
-
-    return result
-
-
 def migrate_xlsx_to_firestore(xlsx_path: str, db: Optional[FirestoreLedgerDB] = None,
                               dry_run: bool = False, project_id: Optional[str] = None,
                               seed_users: bool = True, publish_cdn: bool = False,
@@ -327,11 +275,8 @@ def migrate_xlsx_to_firestore(xlsx_path: str, db: Optional[FirestoreLedgerDB] = 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Migrate Google Sheets or Excel ledger to Cloud Firestore & CDN")
+    parser = argparse.ArgumentParser(description="Migrate Excel ledger to Cloud Firestore & CDN")
     parser.add_argument("--xlsx", help="Path to 小组奉献资料库_corrected.xlsx")
-    parser.add_argument("--from-sheets", action="store_true", help="Migrate directly from live Google Sheets via Apps Script")
-    parser.add_argument("--apps-script-url", default=os.environ.get("APPS_SCRIPT_URL", ""), help="Apps Script Web App URL")
-    parser.add_argument("--token", default=os.environ.get("PIPELINE_TOKEN", ""), help="Pipeline shared token")
     parser.add_argument("--project", help="Google Cloud project ID", default=os.environ.get("GOOGLE_CLOUD_PROJECT", "group-511516"))
     parser.add_argument("--dry-run", action="store_true", help="Parse and log without writing to Firestore")
     parser.add_argument("--seed-users", action="store_true", default=True, help="Seed default users and app settings")
@@ -341,23 +286,6 @@ def main() -> int:
     settings = Settings.from_env()
     if args.project:
         settings.cdn_project = args.project
-
-    if args.from_sheets:
-        url = args.apps_script_url or settings.apps_script_url
-        tok = args.token or settings.pipeline_token
-        if not url:
-            log.error("APPS_SCRIPT_URL is required when using --from-sheets")
-            return 1
-        try:
-            res = migrate_sheets_to_firestore(
-                url, tok, dry_run=args.dry_run, project_id=args.project,
-                seed_users=args.seed_users, publish_cdn=args.publish_cdn, settings=settings
-            )
-            log.info("Google Sheets -> Firestore migration finished successfully: %s", res)
-            return 0
-        except Exception as exc:
-            log.exception("Google Sheets migration failed: %s", exc)
-            return 1
 
     xlsx_path = args.xlsx or find_default_xlsx_path()
     if not xlsx_path:

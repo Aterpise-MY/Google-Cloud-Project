@@ -2,9 +2,6 @@
 project_id = "group-511516"
 region     = "asia-southeast1"
 
-# Web-app (/exec) URL from Google Apps Script (Deploy > Manage deployments)
-apps_script_url = "https://script.google.com/macros/s/AKfycbyTZAyshSlMEaITGfXx4yJBmSCr9_A00YHWjdwVMK5rECxG7iTLHqNuumoV-Nt5gb-kQg/exec"
-
 # Optional: Netlify JWS secret token for webhook verification
 # netlify_jws_secret = "your-netlify-jws-secret"
 

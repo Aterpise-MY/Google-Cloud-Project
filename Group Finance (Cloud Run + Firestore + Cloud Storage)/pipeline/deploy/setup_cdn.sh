@@ -52,5 +52,5 @@ Done. Next:
   * Optional /index default: the site writes index.html; set the main page suffix:
       gcloud storage buckets update gs://$BUCKET --web-main-page-suffix=index.html
   * Re-run the pipeline deploy with CDN_URL_MAP=$NAME-urlmap so every publish purges the CDN cache:
-      CDN_URL_MAP=$NAME-urlmap APPS_SCRIPT_URL=... CONFIRM_DEPLOY=yes ./deploy/deploy_cloud_run.sh
+      CDN_URL_MAP=$NAME-urlmap CONFIRM_DEPLOY=yes ./deploy/deploy_cloud_run.sh
 EOF

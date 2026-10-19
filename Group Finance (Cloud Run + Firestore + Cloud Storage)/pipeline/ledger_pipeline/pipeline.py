@@ -13,7 +13,7 @@ log = logging.getLogger("ledger.pipeline")
 from .config import Settings
 from .ledger import YM, Month, build_months, last_day_of_month
 from .render import render_all_months_html, render_month_html
-from .sources import AppsScriptClient, Source
+from .sources import Source
 from .storage import Storage
 
 HTML = "text/html; charset=utf-8"
@@ -34,19 +34,6 @@ def parse_ym(s: str) -> YM:
 
 def pdf_filename(ym: YM) -> str:
     return f"小组奉献记录_{ym_key(ym)}.pdf"
-
-
-class AppsScriptDrive:
-    """Saves files into the user's Google Drive via the Apps Script web app (runs as the
-    owner, so no service-account quota problem on a personal Drive)."""
-
-    def __init__(self, client: AppsScriptClient):
-        self.client = client
-
-    def save_pdf(self, filename: str, pdf: bytes) -> dict:
-        res = self.client.call("save_pdf", filename=filename,
-                               content_b64=base64.b64encode(pdf).decode("ascii"))
-        return {"id": res.get("id"), "url": res.get("url"), "folder": res.get("folder")}
 
 
 class Pipeline:

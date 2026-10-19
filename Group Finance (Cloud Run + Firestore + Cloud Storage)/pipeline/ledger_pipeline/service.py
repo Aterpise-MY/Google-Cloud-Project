@@ -142,8 +142,7 @@ def safe_load_source(p: Pipeline):
 def build_pipeline(settings: Settings, db: Optional[FirestoreLedgerDB] = None) -> Pipeline:
     from .cdn import make_invalidator
     from .pdfgen import html_to_pdf
-    from .pipeline import AppsScriptDrive
-    from .sources import AppsScriptClient, AppsScriptSource, FirestoreSource, XlsxSource
+    from .sources import FirestoreSource, XlsxSource
     from .storage import GcsStorage, LocalStorage
 
     db = db or FirestoreLedgerDB(settings.cdn_project)
@@ -154,21 +153,20 @@ def build_pipeline(settings: Settings, db: Optional[FirestoreLedgerDB] = None) -
     except Exception as exc:
         log.warning("Could not initialize FirestoreSource: %s", exc)
 
+    xlsx_path = os.environ.get("XLSX_PATH", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "小组奉献资料库_corrected.xlsx")))
+    if source is None:
+        source = XlsxSource(xlsx_path)
+
     if not settings.bucket:
         site_dir = os.environ.get("SITE_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "preview_site")))
         site = LocalStorage(site_dir)
         private = LocalStorage(os.path.join(site_dir, "_archive"))
-        if source is None:
-            xlsx_path = os.environ.get("XLSX_PATH", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "小组奉献资料库_corrected.xlsx")))
-            source = XlsxSource(xlsx_path) if (not settings.apps_script_url and os.path.exists(xlsx_path)) else AppsScriptSource(AppsScriptClient(settings.apps_script_url, settings.pipeline_token))
         return Pipeline(settings, source, site, private=private, drive=None, pdf=lambda h: h.encode("utf-8"), invalidate=lambda: None)
 
-    client = AppsScriptClient(settings.apps_script_url, settings.pipeline_token)
     site = GcsStorage(settings.bucket)
     private = GcsStorage(settings.archive_bucket) if settings.archive_bucket else None
-    primary_source = source if source is not None else AppsScriptSource(client)
-    return Pipeline(settings, primary_source, site, private=private,
-                    drive=AppsScriptDrive(client), pdf=html_to_pdf,
+    return Pipeline(settings, source, site, private=private,
+                    drive=None, pdf=html_to_pdf,
                     invalidate=make_invalidator(settings.cdn_project, settings.cdn_url_map))
 
 
@@ -392,24 +390,17 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         scheme = (req.headers.get("X-Forwarded-Proto") or req.scheme or "https").split(",")[0].strip()
         return f"{scheme}://{req.host}/auth/google/callback"
 
-    def _run_migration_and_publish(source_url: str = "", source_token: str = "") -> Dict[str, Any]:
-        from scripts.migrate_xlsx_to_firestore import migrate_sheets_to_firestore, migrate_xlsx_to_firestore
-        url = (source_url or settings.apps_script_url or "").strip()
-        tok = (source_token or settings.pipeline_token or "").strip()
+    def _run_migration_and_publish() -> Dict[str, Any]:
+        from scripts.migrate_xlsx_to_firestore import migrate_xlsx_to_firestore
         p = get_pipeline()
         mig_res: Dict[str, Any] = {}
-        if url and tok:
-            mig_res = migrate_sheets_to_firestore(
-                url, tok, db=db, settings=settings, publish_cdn=False
+        xp = get_xlsx_path(p)
+        if xp and os.path.exists(xp):
+            mig_res = migrate_xlsx_to_firestore(
+                xp, db=db, settings=settings, publish_cdn=False
             )
-        else:
-            xp = get_xlsx_path(p)
-            if xp and os.path.exists(xp):
-                mig_res = migrate_xlsx_to_firestore(
-                    xp, db=db, settings=settings, publish_cdn=False
-                )
-            elif hasattr(db, "ensure_seeded"):
-                mig_res = db.ensure_seeded()
+        elif hasattr(db, "ensure_seeded"):
+            mig_res = db.ensure_seeded()
         site_res = p.publish_site()
         return {"migrated": mig_res, "site": site_res}
 
@@ -566,10 +557,7 @@ window.location.replace("/app?tab=entry");
         # Action: migrate_to_firestore
         if action == "migrate_to_firestore":
             try:
-                res = _run_migration_and_publish(
-                    source_url=str(data.get("apps_script_url") or ""),
-                    source_token=str(data.get("token") or ""),
-                )
+                res = _run_migration_and_publish()
                 return jsonify(status="success", message="数据已成功同步并发布", **res)
             except Exception as exc:
                 log.exception("migrate_to_firestore failed")
@@ -1023,18 +1011,7 @@ window.location.replace("/app?tab=entry");
 
             p = get_pipeline()
 
-            # If Apps Script is configured, call Apps Script with action="delete_record"
-            if settings.apps_script_url:
-                try:
-                    from .sources import AppsScriptClient
-                    client = AppsScriptClient(settings.apps_script_url, settings.pipeline_token)
-                    client.call("delete_record", year=year, month=month, date=date_str,
-                                item=item, income=income, expense=expense)
-                except Exception as exc:
-                    log.warning("Could not sync delete to Apps Script: %s", exc)
-
-            # Always attempt to delete from the Excel file (小组奉献资料库_corrected.xlsx),
-            # regardless of whether p.source is XlsxSource or AppsScriptSource
+            # Always attempt to delete from the Excel file (小组奉献资料库_corrected.xlsx)
             xlsx_path = get_xlsx_path(p)
             if xlsx_path and os.path.exists(xlsx_path):
                 try:
@@ -1128,16 +1105,6 @@ window.location.replace("/app?tab=entry");
 
         p = get_pipeline()
 
-        # If Apps Script is configured, pass to Google Sheets to keep it in sync
-        sheet_result = None
-        if settings.apps_script_url:
-            try:
-                from .sources import AppsScriptClient
-                client = AppsScriptClient(settings.apps_script_url, settings.pipeline_token)
-                sheet_result = client.call("add_record", date=date_str, item=item, income=income, expense=expense)
-            except Exception as exc:
-                log.warning("Could not sync directly to Apps Script: %s", exc)
-
         # Append to local corrected xlsx if xlsx exists
         xlsx_path = get_xlsx_path(p)
         if xlsx_path and os.path.exists(xlsx_path):
@@ -1188,8 +1155,6 @@ window.location.replace("/app?tab=entry");
 
         # Get recent 5 logs for UI echo
         recent_logs = db.get_recent_transactions(limit=5)
-        if not recent_logs and sheet_result and sheet_result.get("logs"):
-            recent_logs = sheet_result.get("logs")
         if not recent_logs:
             try:
                 all_months = build_months(safe_load_source(p), upto=(settings.now().year, settings.now().month), opening_balance=settings.opening_balance)
@@ -1210,7 +1175,7 @@ window.location.replace("/app?tab=entry");
             message="记录成功！",
             id=created_tx.get("id", "") if isinstance(created_tx, dict) else "",
             transaction=created_tx,
-            targetSheet=sheet_result.get("targetSheet") if sheet_result else f"{date_str[:7]}",
+            targetSheet=f"{date_str[:7]}",
             logs=recent_logs,
         )
 

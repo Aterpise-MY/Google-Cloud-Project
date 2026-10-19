@@ -34,12 +34,6 @@ variable "timezone" {
   default     = "Asia/Kuala_Lumpur"
 }
 
-variable "apps_script_url" {
-  description = "Web-app (/exec) URL of the Google Apps Script deployment"
-  type        = string
-  default     = "https://script.google.com/macros/s/AKfycbyTZAyshSlMEaITGfXx4yJBmSCr9_A00YHWjdwVMK5rECxG7iTLHqNuumoV-Nt5gb-kQg/exec"
-}
-
 variable "pipeline_token" {
   description = "Optional existing pipeline token. If left blank, Terraform will generate a secure 32-byte hex token."
   type        = string

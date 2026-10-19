@@ -12,9 +12,7 @@ from zoneinfo import ZoneInfo
 @dataclass
 class Settings:
     timezone: str = "Asia/Kuala_Lumpur"
-    # Apps Script web app that fronts the spreadsheet (read ledger / save PDF to Drive)
-    apps_script_url: str = ""
-    pipeline_token: str = ""            # shared secret: Apps Script <-> Cloud Run <-> Scheduler
+    pipeline_token: str = ""            # shared secret: Cloud Run <-> Scheduler
     netlify_jws_secret: str = ""        # "JWS secret token" of the Netlify outgoing webhook
     bucket: str = ""                    # GCS bucket served by the CDN (public site pages only)
     archive_bucket: str = ""            # PRIVATE GCS bucket: PDFs + closing state (defaults to `bucket`)
@@ -39,7 +37,6 @@ class Settings:
         placeholders = ("UNCONFIGURED", "PLACEHOLDER_SET_IN_SECRET_MANAGER")
         return cls(
             timezone=g("TZ_NAME", "Asia/Kuala_Lumpur"),
-            apps_script_url=g("APPS_SCRIPT_URL", ""),
             pipeline_token=g("PIPELINE_TOKEN", ""),
             netlify_jws_secret=g("NETLIFY_JWS_SECRET", ""),
             bucket=g("CDN_BUCKET", ""),

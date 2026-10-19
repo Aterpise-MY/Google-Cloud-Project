@@ -51,7 +51,7 @@ The deploy workflow (`.github/workflows/group-finance-deploy.yml`) ships code on
 1. Copy and configure variables:
    ```bash
    cp terraform.tfvars.example terraform.tfvars
-   # Edit terraform.tfvars with your GCP project_id and apps_script_url
+   # Edit terraform.tfvars with your GCP project_id and Google OAuth credentials
    ```
 
 2. Initialize and validate:
@@ -70,15 +70,14 @@ The deploy workflow (`.github/workflows/group-finance-deploy.yml`) ships code on
    terraform apply
    ```
 
-5. Retrieve outputs and connect to Google Apps Script:
+5. Retrieve outputs:
    ```bash
    # Retrieve the generated PIPELINE_TOKEN:
    terraform output -raw pipeline_token
 
    # Retrieve the Cloud Run service URL:
    terraform output -raw cloud_run_url
-   ```
 
-6. In Google Apps Script (**Project Settings > Script properties**):
-   - Set `PIPELINE_URL` to the Cloud Run URL.
-   - Set `PIPELINE_TOKEN` to the generated pipeline token.
+   # Retrieve the Google OAuth 2.0 Authorized Redirect URI:
+   terraform output -raw google_oauth_redirect_uri
+   ```

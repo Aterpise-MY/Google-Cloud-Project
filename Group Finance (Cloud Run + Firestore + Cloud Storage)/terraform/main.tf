@@ -319,10 +319,6 @@ resource "google_cloud_run_v2_service" "ledger_pipeline" {
         value = local.archive_bucket
       }
       env {
-        name  = "APPS_SCRIPT_URL"
-        value = var.apps_script_url
-      }
-      env {
         name  = "TZ_NAME"
         value = var.timezone
       }

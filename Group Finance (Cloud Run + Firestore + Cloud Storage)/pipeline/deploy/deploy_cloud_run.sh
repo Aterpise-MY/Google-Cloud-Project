@@ -17,8 +17,6 @@ SA_NAME="${SA_NAME:-ledger-pipeline}"
 SA="${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
 JOB="${JOB:-ledger-month-end}"
 TZ_NAME="${TZ_NAME:-Asia/Kuala_Lumpur}"
-# Web-app (/exec) URL of the Apps Script deployment (Deploy > Manage deployments). REQUIRED.
-APPS_SCRIPT_URL="${APPS_SCRIPT_URL:-https://script.google.com/macros/s/AKfycbyTZAyshSlMEaITGfXx4yJBmSCr9_A00YHWjdwVMK5rECxG7iTLHqNuumoV-Nt5gb-kQg/exec}"
 # Optional: Netlify outgoing-webhook "JWS secret token" (Netlify > Site config > Notifications). Leave empty to skip.
 NETLIFY_JWS_SECRET="${NETLIFY_JWS_SECRET:-}"
 # Optional: set to the URL-map name created by deploy/setup_cdn.sh to purge the CDN after each publish.
@@ -32,9 +30,6 @@ run() {
 
 if [[ "${CONFIRM_DEPLOY:-}" != "yes" ]]; then
   echo "### DRY RUN (set CONFIRM_DEPLOY=yes to execute) ###"
-fi
-if [[ -z "$APPS_SCRIPT_URL" ]]; then
-  echo "ERROR: set APPS_SCRIPT_URL to the Apps Script web app /exec URL" >&2; exit 1
 fi
 
 echo "== 1. APIs"
@@ -91,14 +86,12 @@ secret_ensure() {  # name, value
   gcloud secrets add-iam-policy-binding "$name" --member "serviceAccount:$SA" \
       --role roles/secretmanager.secretAccessor --project "$PROJECT" >/dev/null
 }
-# PIPELINE_TOKEN: reuse the existing one, or generate a new random one (printed ONCE so you can paste it into
-# the Apps Script "Script properties" as PIPELINE_TOKEN).
 if [[ "${CONFIRM_DEPLOY:-}" == "yes" ]] && gcloud secrets describe ledger-pipeline-token --project "$PROJECT" >/dev/null 2>&1; then
   PIPELINE_TOKEN="$(gcloud secrets versions access latest --secret ledger-pipeline-token --project "$PROJECT")"
 elif [[ "${CONFIRM_DEPLOY:-}" == "yes" ]]; then
   PIPELINE_TOKEN="$(openssl rand -hex 32)"
   secret_ensure ledger-pipeline-token "$PIPELINE_TOKEN"
-  echo ">>> NEW PIPELINE_TOKEN (copy into Apps Script property PIPELINE_TOKEN): $PIPELINE_TOKEN"
+  echo ">>> NEW PIPELINE_TOKEN: $PIPELINE_TOKEN"
 else
   PIPELINE_TOKEN="<generated-token>"
   secret_ensure ledger-pipeline-token "$PIPELINE_TOKEN"
@@ -110,9 +103,7 @@ if [[ -n "$NETLIFY_JWS_SECRET" ]]; then
 fi
 
 echo "== 5. Build + deploy Cloud Run (Cloud Build from pipeline/Dockerfile)"
-# --allow-unauthenticated: Apps Script, Netlify and Scheduler cannot present Google IAM identity; every
-# state-changing endpoint is protected in the app by PIPELINE_TOKEN / Netlify JWS signature instead.
-ENVV="CDN_BUCKET=$BUCKET,ARCHIVE_BUCKET=$ARCHIVE_BUCKET,APPS_SCRIPT_URL=$APPS_SCRIPT_URL,TZ_NAME=$TZ_NAME,GOOGLE_CLOUD_PROJECT=$PROJECT"
+ENVV="CDN_BUCKET=$BUCKET,ARCHIVE_BUCKET=$ARCHIVE_BUCKET,TZ_NAME=$TZ_NAME,GOOGLE_CLOUD_PROJECT=$PROJECT"
 [[ -n "$CDN_URL_MAP" ]] && ENVV="$ENVV,CDN_URL_MAP=$CDN_URL_MAP"
 run gcloud run deploy "$SERVICE" --source "$HERE" --project "$PROJECT" --region "$REGION" \
     --service-account "$SA" --allow-unauthenticated --memory 1Gi --cpu 1 --timeout 300 \
@@ -136,9 +127,6 @@ fi
 cat <<EOF
 
 Finished. Next:
-  * Apps Script > Project Settings > Script properties:  PIPELINE_URL=$RUN_URL   PIPELINE_TOKEN=<token above>
-  * Netlify (optional): Site configuration > Notifications > Outgoing webhook "Deploy succeeded" -> $RUN_URL/sync
-    with the JWS secret you passed as NETLIFY_JWS_SECRET.
   * Serving the pages through Cloud CDN: ./deploy/setup_cdn.sh
   * Smoke test: curl -s -X POST -H "X-Pipeline-Token: <token>" $RUN_URL/sync
 EOF

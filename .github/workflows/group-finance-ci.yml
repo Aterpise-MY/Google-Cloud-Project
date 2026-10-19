@@ -37,7 +37,6 @@ jobs:
     outputs:
       python: ${{ steps.filter.outputs.python }}
       image: ${{ steps.filter.outputs.image }}
-      apps_script: ${{ steps.filter.outputs.apps_script }}
       workflows: ${{ steps.filter.outputs.workflows }}
     steps:
       # Skipped when run_all is true: outputs stay empty and every job runs through `inputs.run_all`.
@@ -67,9 +66,6 @@ jobs:
               - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/requirements.txt'
               - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/Dockerfile'
               - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/.dockerignore'
-              - '!**/*.md'
-            apps_script:
-              - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/apps_script/**'
               - '!**/*.md'
             workflows:
               - '.github/workflows/group-finance-*.yml'
@@ -141,25 +137,6 @@ jobs:
         if: failure()
         run: docker logs ledger-ci 2>&1 || true
 
-  apps-script:
-    name: Apps Script tests
-    needs: changes
-    if: needs.changes.outputs.apps_script == 'true' || needs.changes.outputs.workflows == 'true' || inputs.run_all == true
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "24" # Active LTS
-          package-manager-cache: false # no package.json; the test uses only Node built-ins
-
-      - name: Run Apps Script tests
-        run: node "Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/apps_script/test_code_gs.js"
-
   # Runs on every PR and every deploy whatever changed: in a public repository this is the one
   # check that also covers Terraform, docs and workflow changes.
   secret-scan:
@@ -215,7 +192,7 @@ jobs:
   result:
     name: Group Finance CI result
     if: always()
-    needs: [changes, pytest, docker, apps-script, secret-scan]
+    needs: [changes, pytest, docker, secret-scan]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}

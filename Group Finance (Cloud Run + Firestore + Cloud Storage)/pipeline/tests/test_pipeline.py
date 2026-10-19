@@ -1358,9 +1358,9 @@ class FirestoreAndAdminTests(unittest.TestCase):
                 self.assertTrue(any("user_role=user" in ck for ck in cookies_u))
                 self.assertEqual(self.db.get_user("newmember@gmail.com")["role"], "user")
 
-    def test_migrate_sheets_to_firestore_and_cdn_sync(self):
-        from scripts.migrate_xlsx_to_firestore import extract_transactions_from_raw_sheets, migrate_sheets_to_firestore
-        from ledger_pipeline.sources import FirestoreSource
+    def test_migrate_workbook_to_firestore_and_cdn_sync(self):
+        from scripts.migrate_xlsx_to_firestore import extract_transactions_from_raw_sheets, _write_transactions_to_db
+        from ledger_pipeline.service import build_pipeline
 
         raw_sheets = sheets_fixture()
         txs, booklet_meta = extract_transactions_from_raw_sheets(raw_sheets, opening_balance=498.0)
@@ -1374,42 +1374,13 @@ class FirestoreAndAdminTests(unittest.TestCase):
         self.assertEqual(txs[2]["date"], "2026-09-09")
         self.assertEqual(txs[2]["balance"], 658.0)
 
-        class DummyAppsScriptClient:
-            def call(self, action, **payload):
-                self.last_action = action
-                return {
-                    "status": "success",
-                    "sheets": {
-                        "Aug 2026": {
-                            "group_id": "YA5",
-                            "workers": "Rivaldo, Brendon",
-                            "e5": 498,
-                            "rows": [["2026-08-13", "小组", 90, 0, 588]],
-                        },
-                        "Sep 2026": {
-                            "group_id": "YA5",
-                            "workers": "Rivaldo, Brendon",
-                            "e5": 588,
-                            "rows": [["2026-09-07", "小组茶点", 0, 50, 538], ["2026-09-09", "小组", 120, 0, 658]],
-                        },
-                    },
-                }
-
         with tempfile.TemporaryDirectory() as td:
             with unittest.mock.patch.dict(os.environ, {"SITE_DIR": td}):
                 s = Settings(pipeline_token="tok", opening_balance=Decimal(498))
-                res = migrate_sheets_to_firestore(
-                    "https://script.google.com/macros/s/fake/exec",
-                    "tok",
-                    db=self.db,
-                    publish_cdn=True,
-                    settings=s,
-                    client=DummyAppsScriptClient(),
-                )
-                self.assertEqual(res["status"], "ok")
-                self.assertEqual(res["transactions_migrated"], 3)
-                self.assertIn("site", res)
-                self.assertEqual(res["site"]["status"], "ok")
+                written = _write_transactions_to_db(txs, self.db)
+                self.assertEqual(written, 3)
+                site_res = build_pipeline(s, db=self.db).publish_site()
+                self.assertEqual(site_res["status"], "ok")
                 self.assertTrue(os.path.exists(os.path.join(td, "index.html")))
                 self.assertEqual(len(self.db.query_transactions(limit=None)), 3)
 
