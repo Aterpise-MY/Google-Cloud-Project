@@ -15,12 +15,12 @@ on:
     # Only changes that end up in the image. Workflow, tests-only, apps_script, terraform,
     # deploy/, scripts/ and docs changes do not deploy. The exclusion must stay last.
     paths:
-      - "Group Finance/pipeline/ledger_pipeline/**"
-      - "Group Finance/pipeline/frontend/**"
-      - "Group Finance/pipeline/preview_site/**"
-      - "Group Finance/pipeline/requirements.txt"
-      - "Group Finance/pipeline/Dockerfile"
-      - "Group Finance/pipeline/.dockerignore"
+      - "Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/ledger_pipeline/**"
+      - "Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/frontend/**"
+      - "Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/preview_site/**"
+      - "Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/requirements.txt"
+      - "Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/Dockerfile"
+      - "Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/.dockerignore"
       - "!**/*.md"
   workflow_dispatch: # manual (re)deploy of main, unfiltered
 
@@ -100,7 +100,7 @@ jobs:
           docker build --platform linux/amd64 \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
             --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
-            -t "${IMAGE}:${tag}" "Group Finance/pipeline"
+            -t "${IMAGE}:${tag}" "Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline"
           docker push "${IMAGE}:${tag}"
           digest=$(gcloud artifacts docker images describe "${IMAGE}:${tag}" --format='value(image_summary.digest)')
           if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then

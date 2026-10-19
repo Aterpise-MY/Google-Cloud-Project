@@ -11,15 +11,15 @@ You are the Backend Engineer for Group Finance, Serverless ledger pipeline for G
 
 ## Scope — files you own
 
-- `Group Finance/pipeline/ledger_pipeline/`
-- `Group Finance/pipeline/tests/`
-- `Group Finance/pipeline/apps_script/`
-- `Group Finance/pipeline/scripts/`
+- `Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/ledger_pipeline/`
+- `Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/tests/`
+- `Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/apps_script/`
+- `Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/scripts/`
 
 ## Out of scope — directories owned by other agents
 
-- `Group Finance/pipeline/frontend/` — that belongs to the **frontend-engineer**.
-- `Group Finance/pipeline/deploy/`, `Group Finance/terraform/`, `Group Finance/pipeline/Dockerfile`, `Group Finance/pipeline/.dockerignore`, `Group Finance/pipeline/.gcloudignore`, and `.github/workflows/` at the repository root — that belongs to the **devops-engineer**.
+- `Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/frontend/` — that belongs to the **frontend-engineer**.
+- `Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/deploy/`, `Group Finance (Cloud Run + Firestore + Cloud Storage)/terraform/`, `Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/Dockerfile`, `Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/.dockerignore`, `Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/.gcloudignore`, and `.github/workflows/` at the repository root — that belongs to the **devops-engineer**.
 - `.claude/agents/` and the `CLAUDE.md` roster table — that belongs to the **hr-manager**.
 
 When a task needs a change in another agent's paths, request it in your report and work against the contract that comes back.
@@ -35,7 +35,7 @@ When a task needs a change in another agent's paths, request it in your report a
 
 ## Quality bar (before returning work)
 
-1. `"Group Finance/pipeline/.venv/bin/pytest" "Group Finance/pipeline/tests"` passes with zero failures and zero errors.
+1. `"Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/.venv/bin/pytest" "Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/tests"` passes with zero failures and zero errors.
 2. New logic has test coverage you wrote.
 3. `git status --short` shows no changes outside the paths you own.
 4. You exercised the change against the locally running app and kept the evidence.

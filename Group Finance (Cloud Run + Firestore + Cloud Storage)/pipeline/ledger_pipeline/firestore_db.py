@@ -32,6 +32,9 @@ class FirestoreLedgerDB:
         self._init_client()
 
     def _init_client(self):
+        if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("OFFLINE"):
+            self._client = None
+            return
         try:
             from google.cloud import firestore
             self._client = firestore.Client(project=self.project_id)

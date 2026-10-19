@@ -5,6 +5,7 @@
 *.env.*
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 *.pkcs12
@@ -16,17 +17,47 @@
 *service_account*.json
 *service-account*.json
 client_secret*.json
+application_default_credentials.json
+gha-creds-*.json
 token.json
 tokens.json
+*token*.json
+*sa*key*.json
+*sa_key*.json
+*sa-key*.json
+*gcp*key*.json
+*.id_rsa
+*.id_ed25519
+id_rsa*
+id_ed25519*
+id_ecdsa*
+id_dsa*
+.pypirc
+
+# ==============================================================================
+# Local Databases & State Caches
+# ==============================================================================
+*.sqlite*
+*.s3db
+*.db
+*.db-journal
+*.db-wal
+.playwright-mcp/
 
 # ==============================================================================
 # Terraform (Sensitive State & Secrets & Binaries)
 # ==============================================================================
-**/.terraform/
+.terraform
+.terraform/
+.terraform/*
+**/.terraform/**
 *.tfstate
 *.tfstate.*
 *.tfstate.backup
 *.tfvars
+*.tfvars.json
+*.auto.tfvars
+*.tfplan
 !*.tfvars.example
 .terraform.lock.hcl
 override.tf
@@ -36,6 +67,7 @@ override.tf.json
 .terraformrc
 terraform.rc
 crash.log
+crash.*.log
 
 # ==============================================================================
 # Sensitive Financial Documents & Ledger Databases
@@ -48,8 +80,9 @@ crash.log
 *.doc
 *小组奉献资料库*
 *Booklet*
-Group Finance/小组奉献 - Project editor - Apps Script*
-Group Finance/pipeline/preview_site/data/*.json
+*小组奉献 - Project editor - Apps Script*
+pipeline/preview_site/data/*.json
+*Group Finance*/pipeline/preview_site/data/*.json
 
 # ==============================================================================
 # Python & Virtual Environments
@@ -87,6 +120,15 @@ htmlcov/
 .nox/
 
 # ==============================================================================
+# Node & Frontend Dependencies & Build Artifacts
+# ==============================================================================
+node_modules/
+.npmrc
+.cache/
+dist/
+artifacts/
+
+# ==============================================================================
 # Operating System & IDE Artifacts
 # ==============================================================================
 .DS_Store
@@ -98,6 +140,7 @@ ehthumbs.db
 Thumbs.db
 .idea/
 .vscode/
+.claude/settings.local.json
 *.swp
 *.swo
 *~
