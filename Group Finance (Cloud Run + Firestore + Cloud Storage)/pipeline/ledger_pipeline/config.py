@@ -27,10 +27,16 @@ class Settings:
     # /booklet login. No default password: empty (or whitespace-only) disables booklet login entirely.
     booklet_user: str = "admin"
     booklet_password: str = field(default="", repr=False)
+    # Google OAuth 2.0 Client ID & Client Secret
+    google_client_id: str = ""
+    google_client_secret: str = field(default="", repr=False)
 
     @classmethod
     def from_env(cls, env=os.environ) -> "Settings":
         g = env.get
+        raw_cid = (g("GOOGLE_CLIENT_ID", "") or "").strip()
+        raw_csec = (g("GOOGLE_CLIENT_SECRET", "") or "").strip()
+        placeholders = ("UNCONFIGURED", "PLACEHOLDER_SET_IN_SECRET_MANAGER")
         return cls(
             timezone=g("TZ_NAME", "Asia/Kuala_Lumpur"),
             apps_script_url=g("APPS_SCRIPT_URL", ""),
@@ -46,6 +52,8 @@ class Settings:
             page_cache_seconds=int(g("PAGE_CACHE_SECONDS", "60")),
             booklet_user=g("BOOKLET_USER", "admin"),
             booklet_password=g("BOOKLET_PASSWORD", ""),
+            google_client_id="" if raw_cid in placeholders else raw_cid,
+            google_client_secret="" if raw_csec in placeholders else raw_csec,
         )
 
     def now(self) -> datetime:

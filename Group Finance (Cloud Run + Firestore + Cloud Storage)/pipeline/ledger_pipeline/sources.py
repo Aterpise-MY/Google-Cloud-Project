@@ -112,6 +112,11 @@ class FirestoreSource:
         first_ym = sorted_yms[0]
         last_ym = sorted_yms[-1]
 
+        app_settings = self.db.get_app_settings() if hasattr(self.db, "get_app_settings") else {}
+        booklet_cfg = (app_settings.get("booklet") if isinstance(app_settings, dict) else None) or {}
+        group_id = booklet_cfg.get("group_code") or "YA5"
+        workers = booklet_cfg.get("counters") or "Rivaldo, Brendon"
+
         running_bal = self.opening_balance
         curr_ym = first_ym
         while curr_ym <= last_ym:
@@ -139,8 +144,8 @@ class FirestoreSource:
             if month_txs:
                 out[s_name] = RawSheet(
                     name=s_name,
-                    group_id="YA5",
-                    workers="Rivaldo, Brendon",
+                    group_id=group_id,
+                    workers=workers,
                     e5=float(e5_val),
                     rows=rows,
                 )

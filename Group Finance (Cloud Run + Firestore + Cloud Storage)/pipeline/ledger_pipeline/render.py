@@ -293,6 +293,14 @@ def _footer(closed: bool, closing_date: Optional[date], verify_by: str, verify_n
 
 
 DELETE_SCRIPT = """<script>
+(function() {
+  try {
+    var u = JSON.parse(localStorage.getItem('currentUser') || 'null');
+    if (u && u.role && u.role !== 'admin') {
+      window.location.replace('/app?tab=entry');
+    }
+  } catch (e) {}
+})();
 async function deleteEntry(year, month, dateStr, item, income, expense, btn) {
   var amtStr = Number(income) > 0 ? ('收入: ' + income) : (Number(expense) > 0 ? ('支出: ' + expense) : '');
   var msg = '确定要删除这条记录吗？\\n\\n' +
@@ -367,9 +375,10 @@ def render_month_card(month: Month, *, closed: bool = False, closing_date: Optio
         body.append(f"<tr>{cells}</tr>")
 
     id_attr = f' id="{escape(card_id)}"' if card_id else ""
+    group_id = getattr(month, "group_id", "") or "YA5"
     return f"""<div class="sheet"{id_attr}>
 <h1>小组每月奉献记录</h1>
-<div class="hdr">小组编号：<u>__YA5___</u>            点算同工：<u>{escape(month.workers)}</u>        月份：{month_label(month)}</div>
+<div class="hdr">小组编号：<u>__{escape(group_id)}___</u>            点算同工：<u>{escape(month.workers)}</u>        月份：{month_label(month)}</div>
 <table><colgroup>{colgroup}</colgroup><thead><tr>{thead}</tr></thead><tbody>
 {chr(10).join(body)}
 </tbody></table>
@@ -391,8 +400,9 @@ def render_month_html(month: Month, *, closed: bool = False, closing_date: Optio
         nav_html = f"""<div class="nav"><div class="nav-inner">
   <div class="nav-brand">小组每月奉献记录 <span class="badge">{month.year}年{month.month}月</span></div>
   <div class="nav-links">
-    <a href="/manage" style="background:#4f46e5;color:#fff;border-color:#4f46e5;font-weight:600;" title="前往财务登记系统">📝 登记账目</a>
-    <a href="https://docs.google.com/spreadsheets/d/1ruK6Vqx-giwPewYyxkTr95VKk4wg5IpkVplGan9sKhE/edit" target="_blank" rel="noopener noreferrer" style="background:#0f766e;color:#fff;border-color:#0f766e;font-weight:600;" title="在 Google Sheets 中打开原始资料库">📊 Google Sheets 资料库 ↗</a>
+    <a href="/app?tab=entry" style="background:#4f46e5;color:#fff;border-color:#4f46e5;font-weight:600;" title="前往记账录入">📝 记账录入</a>
+    <a href="/app?tab=database-view" style="background:#0284c7;color:#fff;border-color:#0284c7;font-weight:600;" title="前往数据库管理">🗄️ 数据库管理</a>
+    <a href="/booklet" style="background:#1e293b;color:#fff;border-color:#1e293b;font-weight:600;" title="奉献记录全册">📖 奉献记录全册</a>
     <a href="index.html" title="查看从上到下完整显示">全部月份</a>
     {links}
     <button class="btn-print" onclick="window.print()">🖨️ 打印 / 导出 PDF</button>
@@ -452,8 +462,9 @@ def render_all_months_html(months: Dict[YM, Month], *, current_ym: YM,
 <div class="nav"><div class="nav-inner">
   <div class="nav-brand">小组每月奉献记录 <span class="badge">全表连排视图 (从上到下)</span></div>
   <div class="nav-links">
-    <a href="/manage" style="background:#4f46e5;color:#fff;border-color:#4f46e5;font-weight:600;" title="前往财务登记系统">📝 登记账目</a>
-    <a href="https://docs.google.com/spreadsheets/d/1ruK6Vqx-giwPewYyxkTr95VKk4wg5IpkVplGan9sKhE/edit" target="_blank" rel="noopener noreferrer" style="background:#0f766e;color:#fff;border-color:#0f766e;font-weight:600;" title="在 Google Sheets 中打开原始资料库">📊 Google Sheets 资料库 ↗</a>
+    <a href="/app?tab=entry" style="background:#4f46e5;color:#fff;border-color:#4f46e5;font-weight:600;" title="前往记账录入">📝 记账录入</a>
+    <a href="/app?tab=database-view" style="background:#0284c7;color:#fff;border-color:#0284c7;font-weight:600;" title="前往数据库管理">🗄️ 数据库管理</a>
+    <a href="/booklet" style="background:#1e293b;color:#fff;border-color:#1e293b;font-weight:600;" title="奉献记录全册">📖 奉献记录全册</a>
     {nav_links_html}
     <button class="btn-print" onclick="window.print()">🖨️ 打印 / 导出 PDF</button>
     <a href="/booklet/logout" style="background:#f8fafc;color:#64748b;border-color:#cbd5e1;font-size:12px;" title="退出册子登录">🚪 退出</a>

@@ -79,6 +79,31 @@ variable "booklet_password" {
   sensitive   = true
 }
 
+variable "google_oauth_client_id" {
+  description = "Google OAuth 2.0 Client ID for Google Account login (stored in Secret Manager as ledger-google-oauth-client-id and mounted as GOOGLE_CLIENT_ID)."
+  type        = string
+  default     = ""
+}
+
+variable "google_oauth_client_secret" {
+  description = "Google OAuth 2.0 Client Secret for Google Account login (stored in Secret Manager as ledger-google-oauth-client-secret and mounted as GOOGLE_CLIENT_SECRET)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "cdn_url_map" {
+  description = "Optional Cloud CDN URL map name to invalidate automatically whenever Firestore / site data updates (CDN_URL_MAP)."
+  type        = string
+  default     = ""
+}
+
+variable "enable_cloud_cdn" {
+  description = "Set to true to provision a Cloud CDN-enabled backend bucket and global URL map fronting the public site bucket."
+  type        = bool
+  default     = false
+}
+
 variable "github_repository" {
   description = "GitHub repository (owner/name) that deploys the service. Informational only; trust is pinned to github_repository_id."
   type        = string

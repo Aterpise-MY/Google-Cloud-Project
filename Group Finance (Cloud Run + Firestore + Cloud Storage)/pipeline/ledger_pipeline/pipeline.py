@@ -92,9 +92,23 @@ class Pipeline:
                 raise
         return build_months(raw, upto=upto, opening_balance=self.s.opening_balance)
 
+    def _verify_meta(self) -> Tuple[str, str]:
+        vb, vn = self.s.verify_by, self.s.verify_name
+        db = getattr(self.source, "db", None)
+        if db is not None and hasattr(db, "get_app_settings"):
+            try:
+                cfg = db.get_app_settings()
+                bk = (cfg.get("booklet") if isinstance(cfg, dict) else None) or {}
+                vb = bk.get("verify_by") or vb
+                vn = bk.get("verify_name") or vn
+            except Exception:
+                pass
+        return vb, vn
+
     def _render(self, month: Month, closed: bool, nav=(), generated_at="", show_nav=True) -> str:
-        return render_month_html(month, closed=closed, verify_by=self.s.verify_by,
-                                 verify_name=self.s.verify_name, nav=nav,
+        vb, vn = self._verify_meta()
+        return render_month_html(month, closed=closed, verify_by=vb,
+                                 verify_name=vn, nav=nav,
                                  generated_at=generated_at, show_nav=show_nav)
 
     # -- sync ------------------------------------------------------------
@@ -131,9 +145,10 @@ class Pipeline:
             written.append(ym_key(ym))
 
         # index.html renders all month forms stacked vertically from top to bottom
+        vb, vn = self._verify_meta()
         index_html = render_all_months_html(
             months, current_ym=cur, closed_map=closed_map,
-            verify_by=self.s.verify_by, verify_name=self.s.verify_name,
+            verify_by=vb, verify_name=vn,
             generated_at=stamp
         ).encode("utf-8")
         self.storage.put("index.html", index_html, HTML, self._cache())

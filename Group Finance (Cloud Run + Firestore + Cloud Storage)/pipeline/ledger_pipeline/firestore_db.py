@@ -31,6 +31,13 @@ DEFAULT_ADMIN_USERS: Dict[str, Dict[str, Any]] = {
         "status": "active",
         "password_hash": hash_password("Abc1234#"),
     },
+    "admin@ebteq.desk": {
+        "email": "admin@ebteq.desk",
+        "name": "Admin (Ebteq Desk)",
+        "role": "admin",
+        "status": "active",
+        "password_hash": hash_password("Abc1234#"),
+    },
     "admin@groupfinance.com": {
         "email": "admin@groupfinance.com",
         "name": "Admin",
@@ -48,29 +55,141 @@ DEFAULT_ADMIN_USERS: Dict[str, Dict[str, Any]] = {
 }
 
 
+DEFAULT_STANDARD_USERS: Dict[str, Dict[str, Any]] = {
+    "rivaldo@group.finance.com": {
+        "email": "rivaldo@group.finance.com",
+        "name": "Rivaldo",
+        "role": "user",
+        "status": "active",
+        "password_hash": hash_password("User1234#"),
+    },
+    "user@group.finance.com": {
+        "email": "user@group.finance.com",
+        "name": "普通同工",
+        "role": "user",
+        "status": "active",
+        "password_hash": hash_password("User1234#"),
+    },
+}
+
+DEFAULT_INCOME_ITEMS: List[str] = [
+    "小组聚会（教会）",
+    "小组",
+    "特别奉献",
+    "主日学",
+    "感恩奉献",
+]
+
+DEFAULT_EXPENSE_ITEMS: List[str] = [
+    "转回给教会",
+    "白金",
+    "生日蛋糕一月",
+    "爱宴",
+    "茶点",
+    "Outing",
+    "杂支",
+]
+
+DEFAULT_BOOKLET_SETTINGS: Dict[str, str] = {
+    "group_code": "YA5",
+    "counters": "Rivaldo, Brendon",
+    "verify_by": "Brendon",
+    "verify_name": "Rivaldo",
+}
+
+DEFAULT_SEED_TRANSACTIONS: List[Dict[str, Any]] = [
+    {"id": "seed-2026-01-14", "date": "2026-01-14", "year": 2026, "month": 1, "item": "小组聚会（教会）", "income": 167.0, "expense": 0.0, "balance": 860.0, "user": "Brendon"},
+    {"id": "seed-2026-01-16", "date": "2026-01-16", "year": 2026, "month": 1, "item": "转回给教会", "income": 0.0, "expense": 400.0, "balance": 460.0, "user": "Brendon"},
+    {"id": "seed-2026-01-17", "date": "2026-01-17", "year": 2026, "month": 1, "item": "白金", "income": 0.0, "expense": 50.0, "balance": 410.0, "user": "Brendon"},
+    {"id": "seed-2026-01-21", "date": "2026-01-21", "year": 2026, "month": 1, "item": "小组", "income": 89.0, "expense": 0.0, "balance": 499.0, "user": "Rivaldo"},
+    {"id": "seed-2026-01-28", "date": "2026-01-28", "year": 2026, "month": 1, "item": "生日蛋糕一月", "income": 0.0, "expense": 98.0, "balance": 401.0, "user": "Brendon"},
+    {"id": "seed-2026-01-29", "date": "2026-01-29", "year": 2026, "month": 1, "item": "小组", "income": 111.0, "expense": 0.0, "balance": 512.0, "user": "Rivaldo"},
+    {"id": "seed-2026-02-11", "date": "2026-02-11", "year": 2026, "month": 2, "item": "小组", "income": 40.0, "expense": 0.0, "balance": 552.0, "user": "Rivaldo"},
+    {"id": "seed-2026-02-25", "date": "2026-02-25", "year": 2026, "month": 2, "item": "生日二月", "income": 0.0, "expense": 100.0, "balance": 452.0, "user": "Brendon"},
+    {"id": "seed-2026-03-11", "date": "2026-03-11", "year": 2026, "month": 3, "item": "小组", "income": 98.0, "expense": 0.0, "balance": 550.0, "user": "Rivaldo"},
+    {"id": "seed-2026-03-18", "date": "2026-03-18", "year": 2026, "month": 3, "item": "小组", "income": 98.0, "expense": 0.0, "balance": 648.0, "user": "Rivaldo"},
+    {"id": "seed-2026-03-22", "date": "2026-03-22", "year": 2026, "month": 3, "item": "慧芬婚礼", "income": 0.0, "expense": 50.0, "balance": 598.0, "user": "Brendon"},
+    {"id": "seed-2026-04-22", "date": "2026-04-22", "year": 2026, "month": 4, "item": "小组聚会（教会）", "income": 100.0, "expense": 0.0, "balance": 698.0, "user": "Brendon"},
+    {"id": "seed-2026-04-29", "date": "2026-04-29", "year": 2026, "month": 4, "item": "生日蛋糕四月", "income": 0.0, "expense": 88.0, "balance": 610.0, "user": "Brendon"},
+    {"id": "seed-2026-05-13", "date": "2026-05-13", "year": 2026, "month": 5, "item": "小组", "income": 60.0, "expense": 0.0, "balance": 670.0, "user": "Rivaldo"},
+    {"id": "seed-2026-05-14", "date": "2026-05-14", "year": 2026, "month": 5, "item": "5月生日", "income": 0.0, "expense": 100.0, "balance": 570.0, "user": "Brendon"},
+    {"id": "seed-2026-05-28", "date": "2026-05-28", "year": 2026, "month": 5, "item": "小组", "income": 90.0, "expense": 0.0, "balance": 660.0, "user": "Rivaldo"},
+    {"id": "seed-2026-06-10", "date": "2026-06-10", "year": 2026, "month": 6, "item": "小组", "income": 100.0, "expense": 0.0, "balance": 760.0, "user": "Rivaldo"},
+    {"id": "seed-2026-06-24", "date": "2026-06-24", "year": 2026, "month": 6, "item": "惠芬住院水果", "income": 0.0, "expense": 50.0, "balance": 710.0, "user": "Brendon"},
+    {"id": "seed-2026-07-08", "date": "2026-07-08", "year": 2026, "month": 7, "item": "小组", "income": 150.0, "expense": 0.0, "balance": 860.0, "user": "Rivaldo"},
+    {"id": "seed-2026-07-15", "date": "2026-07-15", "year": 2026, "month": 7, "item": "转教会", "income": 0.0, "expense": 450.0, "balance": 410.0, "user": "Brendon"},
+    {"id": "seed-2026-07-22", "date": "2026-07-22", "year": 2026, "month": 7, "item": "小组", "income": 88.0, "expense": 0.0, "balance": 498.0, "user": "Rivaldo"},
+    {"id": "seed-2026-08-13", "date": "2026-08-13", "year": 2026, "month": 8, "item": "小组", "income": 90.0, "expense": 0.0, "balance": 588.0, "user": "Rivaldo"},
+    {"id": "seed-2026-09-07", "date": "2026-09-07", "year": 2026, "month": 9, "item": "小组茶点", "income": 0.0, "expense": 50.0, "balance": 538.0, "user": "Brendon"},
+    {"id": "seed-2026-09-09", "date": "2026-09-09", "year": 2026, "month": 9, "item": "小组", "income": 120.0, "expense": 0.0, "balance": 658.0, "user": "Rivaldo"},
+    {"id": "seed-2026-09-16", "date": "2026-09-16", "year": 2026, "month": 9, "item": "小组布道会", "income": 0.0, "expense": 250.0, "balance": 408.0, "user": "Brendon"},
+    {"id": "seed-2026-09-30", "date": "2026-09-30", "year": 2026, "month": 9, "item": "9月生日", "income": 0.0, "expense": 89.0, "balance": 319.0, "user": "Brendon"},
+]
+
+
 class FirestoreLedgerDB:
     def __init__(self, project_id: Optional[str] = None):
         self.project_id = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", "group-511516")
         self._client = None
         self._memory_tx: List[Dict[str, Any]] = []
         self._memory_closings: Dict[str, Dict[str, Any]] = {}
-        self._memory_users: Dict[str, Dict[str, Any]] = {k: dict(v) for k, v in DEFAULT_ADMIN_USERS.items()}
+        self._memory_users: Dict[str, Dict[str, Any]] = {
+            **{k: dict(v) for k, v in DEFAULT_ADMIN_USERS.items()},
+            **{k: dict(v) for k, v in DEFAULT_STANDARD_USERS.items()},
+        }
+        self._memory_settings: Dict[str, Any] = {
+            "income_items": list(DEFAULT_INCOME_ITEMS),
+            "expense_items": list(DEFAULT_EXPENSE_ITEMS),
+            "booklet": dict(DEFAULT_BOOKLET_SETTINGS),
+        }
         self._init_client()
 
+    @property
+    def is_emulator(self) -> bool:
+        return bool(os.environ.get("FIRESTORE_EMULATOR_HOST")) and self._client is not None
+
+    @property
+    def mode(self) -> str:
+        if self.is_emulator:
+            return "emulator"
+        if self._client is not None:
+            return "firestore"
+        return "memory"
+
     def _init_client(self):
-        if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("OFFLINE"):
+        import socket
+        import sys
+        if os.environ.get("PYTEST_CURRENT_TEST") or "unittest" in sys.modules:
+            self._client = None
+            return
+        if not os.environ.get("FIRESTORE_EMULATOR_HOST"):
+            for host, port in (("127.0.0.1", 8085), ("127.0.0.1", 8681), ("host.docker.internal", 8085), ("host.docker.internal", 8681)):
+                try:
+                    with socket.create_connection((host, port), timeout=0.15):
+                        os.environ["FIRESTORE_EMULATOR_HOST"] = f"{host}:{port}"
+                        if port == 8681 and self.project_id == "group-511516":
+                            self.project_id = os.environ.get("FIRESTORE_EMULATOR_PROJECT", "demo-onboardai")
+                        break
+                except OSError:
+                    continue
+        if os.environ.get("OFFLINE") and not os.environ.get("FIRESTORE_EMULATOR_HOST"):
             self._client = None
             return
         try:
             from google.cloud import firestore
             self._client = firestore.Client(project=self.project_id)
-            log.info("Connected to Cloud Firestore (project=%s)", self.project_id)
+            emulator_host = os.environ.get("FIRESTORE_EMULATOR_HOST")
+            if emulator_host:
+                log.info("Connected to Firebase Firestore Emulator at %s (project=%s)", emulator_host, self.project_id)
+            else:
+                log.info("Connected to Cloud Firestore (project=%s)", self.project_id)
         except Exception as exc:
             log.warning("Cloud Firestore client could not be initialized (%s); using in-memory store.", exc)
             self._client = None
 
     def add_transaction(self, *, date_str: str, item: str, income: float,
-                        expense: float, balance: float, user: str = "admin") -> Dict[str, Any]:
+                        expense: float, balance: float, user: str = "admin",
+                        doc_id: Optional[str] = None) -> Dict[str, Any]:
         """Saves a transaction entry to Firestore."""
         tz = ZoneInfo("Asia/Kuala_Lumpur")
         now = datetime.now(tz)
@@ -93,15 +212,52 @@ class FirestoreLedgerDB:
         if self._client:
             try:
                 col = self._client.collection("transactions")
-                _, ref = col.add(doc_data)
-                doc_data["id"] = ref.id
-                return doc_data
+                if doc_id:
+                    ref = col.document(doc_id)
+                    ref.set(doc_data)
+                    out = dict(doc_data)
+                    out["id"] = doc_id
+                    return out
+                else:
+                    _, ref = col.add(doc_data)
+                    out = dict(doc_data)
+                    out["id"] = ref.id
+                    return out
             except Exception as exc:
                 log.error("Failed to write to Firestore: %s", exc)
 
-        doc_data["id"] = f"mem-{len(self._memory_tx) + 1}"
-        self._memory_tx.append(doc_data)
-        return doc_data
+        out = dict(doc_data)
+        if doc_id:
+            out["id"] = doc_id
+            for idx, existing in enumerate(self._memory_tx):
+                if existing.get("id") == doc_id:
+                    self._memory_tx[idx] = out
+                    return dict(out)
+            self._memory_tx.append(out)
+            return dict(out)
+
+        out["id"] = f"mem-{len(self._memory_tx) + 1}"
+        self._memory_tx.append(out)
+        return dict(out)
+
+    def get_transaction(self, tx_id: str) -> Optional[Dict[str, Any]]:
+        """Fetches a single transaction record by doc ID."""
+        if not tx_id:
+            return None
+        if self._client:
+            try:
+                doc = self._client.collection("transactions").document(tx_id).get()
+                if doc.exists:
+                    data = dict(doc.to_dict() or {})
+                    data["id"] = doc.id
+                    return data
+            except Exception as exc:
+                log.warning("Firestore get_transaction(%s) failed: %s", tx_id, exc)
+
+        for tx in self._memory_tx:
+            if tx.get("id") == tx_id:
+                return dict(tx)
+        return None
 
     def get_recent_transactions(self, limit: int = 10) -> List[List[Any]]:
         """Returns transactions formatted as [[date, item, income, expense], ...] for the UI echo."""
@@ -199,13 +355,16 @@ class FirestoreLedgerDB:
 
     def update_transaction(self, tx_id: str, updates: Dict[str, Any]) -> bool:
         """Updates a transaction record by doc ID."""
+        orig_date = str(updates.get("orig_date") or updates.get("date") or "").strip()
+        orig_item = str(updates.get("orig_item") or updates.get("item") or "").strip()
         clean_updates = dict(updates)
-        clean_updates.pop("id", None)
+        for k in ("id", "tx_id", "orig_date", "orig_item", "orig_income", "orig_expense"):
+            clean_updates.pop(k, None)
         if "date" in clean_updates:
             parts = str(clean_updates["date"]).split("-")
             if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
-                clean_updates.setdefault("year", int(parts[0]))
-                clean_updates.setdefault("month", int(parts[1]))
+                clean_updates["year"] = int(parts[0])
+                clean_updates["month"] = int(parts[1])
         if "income" in clean_updates and clean_updates["income"] is not None:
             clean_updates["income"] = round(float(clean_updates["income"]), 2)
         if "expense" in clean_updates and clean_updates["expense"] is not None:
@@ -215,12 +374,20 @@ class FirestoreLedgerDB:
 
         if self._client:
             try:
-                doc_ref = self._client.collection("transactions").document(tx_id)
+                col = self._client.collection("transactions")
+                doc_ref = col.document(tx_id)
                 doc = doc_ref.get()
-                if not doc.exists:
-                    return False
-                doc_ref.update(clean_updates)
-                return True
+                if doc.exists:
+                    doc_ref.update(clean_updates)
+                    return True
+                # Fallback match if doc_id was a synthetic/legacy ID
+                if orig_date and orig_item:
+                    for d in col.where("date", "==", orig_date).stream():
+                        data = d.to_dict() or {}
+                        if str(data.get("item", "")).strip() == orig_item:
+                            d.reference.update(clean_updates)
+                            return True
+                return False
             except Exception as exc:
                 log.error("Failed to update transaction %s in Firestore: %s", tx_id, exc)
                 return False
@@ -230,6 +397,11 @@ class FirestoreLedgerDB:
             if tx.get("id") == tx_id:
                 tx.update(clean_updates)
                 return True
+        if orig_date and orig_item:
+            for tx in self._memory_tx:
+                if str(tx.get("date", "")).strip() == orig_date and str(tx.get("item", "")).strip() == orig_item:
+                    tx.update(clean_updates)
+                    return True
         return False
 
     def query_transactions(self, year: Optional[int] = None, month: Optional[int] = None,
@@ -387,4 +559,237 @@ class FirestoreLedgerDB:
 
         self._memory_users[clean_email] = user_data
         return user_data
+
+    def get_user(self, email: str) -> Optional[Dict[str, Any]]:
+        """Looks up user in Firestore 'users' collection or in-memory store (case-insensitive email)."""
+        if not email:
+            return None
+        clean_email = email.lower().strip()
+        if self._client:
+            try:
+                doc = self._client.collection("users").document(clean_email).get()
+                if doc.exists:
+                    data = dict(doc.to_dict() or {})
+                    data.pop("password_hash", None)
+                    return data
+                docs = self._client.collection("users").where("email", "==", clean_email).limit(1).stream()
+                for d in docs:
+                    data = dict(d.to_dict() or {})
+                    data.pop("password_hash", None)
+                    return data
+            except Exception as exc:
+                log.warning("Firestore get_user lookup failed: %s", exc)
+
+        user = self._memory_users.get(clean_email)
+        if not user:
+            for u in self._memory_users.values():
+                if str(u.get("email", "")).lower().strip() == clean_email:
+                    user = u
+                    break
+        if user:
+            out = dict(user)
+            out.pop("password_hash", None)
+            return out
+        return None
+
+    def list_users(self) -> List[Dict[str, Any]]:
+        """Returns list of all users (email, name, role, status) sorted with admins first then by email."""
+        merged: Dict[str, Dict[str, Any]] = {}
+        for k, u in self._memory_users.items():
+            em = str(u.get("email") or k).lower().strip()
+            merged[em] = {
+                "email": em,
+                "name": u.get("name") or em.split("@")[0],
+                "role": u.get("role", "user"),
+                "status": u.get("status", "active"),
+            }
+        if self._client:
+            try:
+                for d in self._client.collection("users").stream():
+                    data = d.to_dict() or {}
+                    em = str(data.get("email") or d.id).lower().strip()
+                    if em:
+                        merged[em] = {
+                            "email": em,
+                            "name": data.get("name") or em.split("@")[0],
+                            "role": data.get("role", "user"),
+                            "status": data.get("status", "active"),
+                        }
+            except Exception as exc:
+                log.warning("Firestore list_users failed: %s", exc)
+
+        users_list = list(merged.values())
+        users_list.sort(key=lambda u: (0 if u.get("role") == "admin" else 1, u.get("email", "")))
+        return users_list
+
+    def update_user_role(self, email: str, role: str, name: Optional[str] = None) -> Dict[str, Any]:
+        """Updates or creates a user with the specified role ('admin' or 'user')."""
+        clean_email = (email or "").lower().strip()
+        clean_role = (role or "").lower().strip()
+        if not clean_email:
+            raise ValueError("Email is required")
+        if clean_role not in ("admin", "user"):
+            raise ValueError(f"Invalid role: {role}")
+
+        existing = self._memory_users.get(clean_email, {})
+        tz = ZoneInfo("Asia/Kuala_Lumpur")
+        now = datetime.now(tz)
+        default_pw = "Abc1234#" if clean_role == "admin" else "User1234#"
+        user_data = {
+            "email": clean_email,
+            "name": name or existing.get("name") or clean_email.split("@")[0],
+            "role": clean_role,
+            "status": existing.get("status", "active"),
+            "password_hash": existing.get("password_hash") or hash_password(default_pw),
+            "updated_at": now.isoformat(),
+        }
+        if "created_at" in existing:
+            user_data["created_at"] = existing["created_at"]
+        else:
+            user_data["created_at"] = now.isoformat()
+
+        if self._client:
+            try:
+                self._client.collection("users").document(clean_email).set(user_data, merge=True)
+            except Exception as exc:
+                log.error("Failed to update user role in Firestore: %s", exc)
+
+        self._memory_users[clean_email] = user_data
+        out = dict(user_data)
+        out.pop("password_hash", None)
+        return out
+
+    def get_app_settings(self) -> Dict[str, Any]:
+        """Returns application settings (income_items, expense_items, booklet metadata)."""
+        base_booklet = dict(DEFAULT_BOOKLET_SETTINGS)
+        base_booklet.update(self._memory_settings.get("booklet") or {})
+        result: Dict[str, Any] = {
+            "income_items": list(self._memory_settings.get("income_items") or DEFAULT_INCOME_ITEMS),
+            "expense_items": list(self._memory_settings.get("expense_items") or DEFAULT_EXPENSE_ITEMS),
+            "booklet": base_booklet,
+        }
+        if self._client:
+            try:
+                doc = self._client.collection("settings").document("app_config").get()
+                if doc.exists:
+                    data = doc.to_dict() or {}
+                    if isinstance(data.get("income_items"), list) and data["income_items"]:
+                        result["income_items"] = [str(x).strip() for x in data["income_items"] if str(x).strip()]
+                    if isinstance(data.get("expense_items"), list) and data["expense_items"]:
+                        result["expense_items"] = [str(x).strip() for x in data["expense_items"] if str(x).strip()]
+                    if isinstance(data.get("booklet"), dict):
+                        for k in ("group_code", "counters", "verify_by", "verify_name"):
+                            if data["booklet"].get(k):
+                                result["booklet"][k] = str(data["booklet"][k]).strip()
+                    self._memory_settings = {
+                        "income_items": list(result["income_items"]),
+                        "expense_items": list(result["expense_items"]),
+                        "booklet": dict(result["booklet"]),
+                    }
+            except Exception as exc:
+                log.warning("Firestore get_app_settings failed: %s", exc)
+        return result
+
+    def update_app_settings(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Updates application settings in Firestore settings/app_config and in-memory store."""
+        current = self.get_app_settings()
+        if "income_items" in updates and isinstance(updates["income_items"], list):
+            cleaned_inc = [str(x).strip() for x in updates["income_items"] if str(x).strip()]
+            if cleaned_inc:
+                current["income_items"] = cleaned_inc
+        if "expense_items" in updates and isinstance(updates["expense_items"], list):
+            cleaned_exp = [str(x).strip() for x in updates["expense_items"] if str(x).strip()]
+            if cleaned_exp:
+                current["expense_items"] = cleaned_exp
+        if "booklet" in updates and isinstance(updates["booklet"], dict):
+            bk = updates["booklet"]
+            for k in ("group_code", "counters", "verify_by", "verify_name"):
+                if k in bk and bk[k] is not None and str(bk[k]).strip():
+                    current["booklet"][k] = str(bk[k]).strip()
+
+        self._memory_settings = {
+            "income_items": list(current["income_items"]),
+            "expense_items": list(current["expense_items"]),
+            "booklet": dict(current["booklet"]),
+        }
+        if self._client:
+            try:
+                self._client.collection("settings").document("app_config").set(self._memory_settings, merge=True)
+            except Exception as exc:
+                log.error("Failed to update app settings in Firestore: %s", exc)
+        return self.get_app_settings()
+
+    def seed_default_users_and_settings(self) -> Dict[str, Any]:
+        """Seeds default admin users, standard users, and app_config settings into Firestore if not present."""
+        tz = ZoneInfo("Asia/Kuala_Lumpur")
+        now_iso = datetime.now(tz).isoformat()
+        all_defaults = {**DEFAULT_ADMIN_USERS, **DEFAULT_STANDARD_USERS}
+        seeded_users = 0
+
+        for email, u_data in all_defaults.items():
+            clean_email = email.lower().strip()
+            payload = dict(u_data)
+            payload.setdefault("created_at", now_iso)
+            self._memory_users.setdefault(clean_email, payload)
+            if self._client:
+                try:
+                    doc_ref = self._client.collection("users").document(clean_email)
+                    if not doc_ref.get().exists:
+                        doc_ref.set(payload, merge=True)
+                        seeded_users += 1
+                except Exception as exc:
+                    log.warning("Could not seed user %s in Firestore: %s", clean_email, exc)
+
+        if self._client:
+            try:
+                cfg_ref = self._client.collection("settings").document("app_config")
+                if not cfg_ref.get().exists:
+                    cfg_ref.set(self._memory_settings, merge=True)
+            except Exception as exc:
+                log.warning("Could not seed settings/app_config in Firestore: %s", exc)
+
+        return {"seeded_users": seeded_users, "total_users": len(self._memory_users)}
+
+    def seed_default_transactions(self) -> int:
+        """Seeds the 26 canonical 2026 transactions into Firestore or memory idempotently."""
+        tz = ZoneInfo("Asia/Kuala_Lumpur")
+        now_iso = datetime.now(tz).isoformat()
+        count = 0
+        if self._client:
+            try:
+                batch = self._client.batch()
+                col = self._client.collection("transactions")
+                for tx in DEFAULT_SEED_TRANSACTIONS:
+                    doc_id = str(tx["id"])
+                    payload = dict(tx)
+                    payload.setdefault("created_at", now_iso)
+                    batch.set(col.document(doc_id), payload, merge=True)
+                    count += 1
+                batch.commit()
+                log.info("Seeded %d default transactions into Firestore (mode=%s).", count, self.mode)
+                return count
+            except Exception as exc:
+                log.warning("Could not batch-seed default transactions in Firestore: %s", exc)
+                count = 0
+
+        for tx in DEFAULT_SEED_TRANSACTIONS:
+            self.add_transaction(
+                date_str=str(tx["date"]),
+                item=str(tx["item"]),
+                income=float(tx["income"]),
+                expense=float(tx["expense"]),
+                balance=float(tx["balance"]),
+                user=str(tx.get("user", "admin")),
+                doc_id=str(tx["id"]),
+            )
+            count += 1
+        return count
+
+    def ensure_seeded(self) -> int:
+        """Ensures Firestore or memory store has default users, settings, and seed transactions if empty."""
+        self.seed_default_users_and_settings()
+        existing = self.query_transactions(limit=1)
+        if not existing:
+            return self.seed_default_transactions()
+        return 0
 

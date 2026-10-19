@@ -1,9 +1,12 @@
 locals {
-  site_bucket      = var.site_bucket_name != "" ? var.site_bucket_name : "${var.project_id}-ledger-site"
-  archive_bucket   = var.archive_bucket_name != "" ? var.archive_bucket_name : "${var.project_id}-ledger-private"
-  pipeline_token   = var.pipeline_token != "" ? var.pipeline_token : random_id.pipeline_token[0].hex
-  booklet_password = var.booklet_password != "" ? var.booklet_password : random_password.booklet_password[0].result
-  clean_domain     = trim(replace(replace(var.custom_domain, "https://", ""), "http://", ""), "/")
+  site_bucket                    = var.site_bucket_name != "" ? var.site_bucket_name : "${var.project_id}-ledger-site"
+  archive_bucket                 = var.archive_bucket_name != "" ? var.archive_bucket_name : "${var.project_id}-ledger-private"
+  pipeline_token                 = var.pipeline_token != "" ? var.pipeline_token : random_id.pipeline_token[0].hex
+  booklet_password               = var.booklet_password != "" ? var.booklet_password : random_password.booklet_password[0].result
+  google_oauth_client_id_val     = var.google_oauth_client_id != "" ? var.google_oauth_client_id : "UNCONFIGURED"
+  google_oauth_client_secret_val = var.google_oauth_client_secret != "" ? var.google_oauth_client_secret : "UNCONFIGURED"
+  effective_cdn_url_map          = var.cdn_url_map != "" ? var.cdn_url_map : (var.enable_cloud_cdn ? google_compute_url_map.cdn_url_map[0].name : "")
+  clean_domain                   = trim(replace(replace(var.custom_domain, "https://", ""), "http://", ""), "/")
 
   services = [
     "run.googleapis.com",
@@ -34,7 +37,7 @@ resource "google_project_service" "enabled_apis" {
   disable_dependent_services = false
 }
 
-# 2. Cloud Storage Buckets
+# 2. Cloud Storage Buckets & Optional Cloud CDN
 resource "google_storage_bucket" "site_bucket" {
   name                        = local.site_bucket
   project                     = var.project_id
@@ -53,6 +56,34 @@ resource "google_storage_bucket_iam_member" "site_public_viewer" {
   bucket = google_storage_bucket.site_bucket.name
   role   = "roles/storage.objectViewer"
   member = "allUsers"
+}
+
+resource "google_compute_backend_bucket" "cdn_backend" {
+  count       = var.enable_cloud_cdn ? 1 : 0
+  project     = var.project_id
+  name        = "${var.service_name}-cdn-backend"
+  description = "Cloud CDN backend bucket for Group Finance public site"
+  bucket_name = google_storage_bucket.site_bucket.name
+  enable_cdn  = true
+
+  cdn_policy {
+    cache_mode  = "CACHE_ALL_STATIC"
+    default_ttl = 60
+    max_ttl     = 300
+    client_ttl  = 60
+  }
+
+  depends_on = [google_project_service.enabled_apis]
+}
+
+resource "google_compute_url_map" "cdn_url_map" {
+  count           = var.enable_cloud_cdn ? 1 : 0
+  project         = var.project_id
+  name            = "${var.service_name}-cdn-urlmap"
+  description     = "Global URL map for Group Finance Cloud CDN cache invalidation"
+  default_service = google_compute_backend_bucket.cdn_backend[0].id
+
+  depends_on = [google_project_service.enabled_apis]
 }
 
 resource "google_storage_bucket" "archive_bucket" {
@@ -102,6 +133,13 @@ resource "google_storage_bucket_iam_member" "archive_bucket_admin" {
 resource "google_project_iam_member" "firestore_user" {
   project = var.project_id
   role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.ledger_pipeline.email}"
+}
+
+# Allow ledger-pipeline service account to invalidate Cloud CDN URL map caches when Firestore updates
+resource "google_project_iam_member" "cdn_cache_invalidator" {
+  project = var.project_id
+  role    = "roles/compute.loadBalancerAdmin"
   member  = "serviceAccount:${google_service_account.ledger_pipeline.email}"
 }
 
@@ -188,6 +226,51 @@ resource "google_secret_manager_secret_iam_member" "booklet_password_accessor" {
   member    = "serviceAccount:${google_service_account.ledger_pipeline.email}"
 }
 
+# Google OAuth 2.0 Client ID & Client Secret (GOOGLE_CLIENT_ID & GOOGLE_CLIENT_SECRET)
+resource "google_secret_manager_secret" "google_oauth_client_id" {
+  project   = var.project_id
+  secret_id = "ledger-google-oauth-client-id"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.enabled_apis]
+}
+
+resource "google_secret_manager_secret_version" "google_oauth_client_id_version" {
+  secret      = google_secret_manager_secret.google_oauth_client_id.id
+  secret_data = local.google_oauth_client_id_val
+}
+
+resource "google_secret_manager_secret_iam_member" "google_oauth_client_id_accessor" {
+  secret_id = google_secret_manager_secret.google_oauth_client_id.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.ledger_pipeline.email}"
+}
+
+resource "google_secret_manager_secret" "google_oauth_client_secret" {
+  project   = var.project_id
+  secret_id = "ledger-google-oauth-client-secret"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.enabled_apis]
+}
+
+resource "google_secret_manager_secret_version" "google_oauth_client_secret_version" {
+  secret      = google_secret_manager_secret.google_oauth_client_secret.id
+  secret_data = local.google_oauth_client_secret_val
+}
+
+resource "google_secret_manager_secret_iam_member" "google_oauth_client_secret_accessor" {
+  secret_id = google_secret_manager_secret.google_oauth_client_secret.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.ledger_pipeline.email}"
+}
+
 # 6. Artifact Registry
 resource "google_artifact_registry_repository" "ledger_repo" {
   project       = var.project_id
@@ -247,6 +330,10 @@ resource "google_cloud_run_v2_service" "ledger_pipeline" {
         name  = "GOOGLE_CLOUD_PROJECT"
         value = var.project_id
       }
+      env {
+        name  = "CDN_URL_MAP"
+        value = local.effective_cdn_url_map
+      }
 
       env {
         name = "PIPELINE_TOKEN"
@@ -276,6 +363,26 @@ resource "google_cloud_run_v2_service" "ledger_pipeline" {
         value_source {
           secret_key_ref {
             secret  = google_secret_manager_secret.booklet_password.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name = "GOOGLE_CLIENT_ID"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.google_oauth_client_id.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name = "GOOGLE_CLIENT_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.google_oauth_client_secret.secret_id
             version = "latest"
           }
         }
@@ -320,6 +427,10 @@ resource "google_cloud_run_v2_service" "ledger_pipeline" {
     google_secret_manager_secret_iam_member.pipeline_token_accessor,
     google_secret_manager_secret_iam_member.booklet_password_accessor,
     google_secret_manager_secret_version.booklet_password_version,
+    google_secret_manager_secret_iam_member.google_oauth_client_id_accessor,
+    google_secret_manager_secret_version.google_oauth_client_id_version,
+    google_secret_manager_secret_iam_member.google_oauth_client_secret_accessor,
+    google_secret_manager_secret_version.google_oauth_client_secret_version,
   ]
 }
 

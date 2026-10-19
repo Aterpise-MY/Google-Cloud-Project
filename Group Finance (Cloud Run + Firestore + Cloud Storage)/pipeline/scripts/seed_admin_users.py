@@ -36,6 +36,13 @@ ADMIN_ACCOUNTS: List[Dict[str, Any]] = [
         "password": "Abc1234#",
     },
     {
+        "email": "admin@ebteq.desk",
+        "name": "Admin (Ebteq Desk)",
+        "role": "admin",
+        "status": "active",
+        "password": "Abc1234#",
+    },
+    {
         "email": "admin@groupfinance.com",
         "name": "Admin",
         "role": "admin",

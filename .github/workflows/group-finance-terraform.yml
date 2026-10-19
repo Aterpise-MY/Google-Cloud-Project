@@ -45,6 +45,10 @@ jobs:
   terraform:
     name: Terraform (${{ github.event_name == 'workflow_dispatch' && github.event.inputs.action || (github.event_name == 'push' && 'apply' || 'plan') }})
     runs-on: ubuntu-latest
+    env:
+      TF_VAR_google_oauth_client_id: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID || vars.GOOGLE_OAUTH_CLIENT_ID || '' }}
+      TF_VAR_google_oauth_client_secret: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET || '' }}
+      TF_VAR_cdn_url_map: ${{ vars.CDN_URL_MAP || '' }}
     defaults:
       run:
         working-directory: 'Group Finance (Cloud Run + Firestore + Cloud Storage)/terraform'

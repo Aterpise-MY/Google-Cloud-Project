@@ -22,6 +22,15 @@ enable_custom_domain_mapping = false
 # (read it with: terraform output -raw booklet_password)
 # booklet_password = "..."
 
+# Optional: Google OAuth 2.0 Client ID and Client Secret for Google Account login
+# Stored in Secret Manager (ledger-google-oauth-client-id / ledger-google-oauth-client-secret)
+# google_oauth_client_id     = "your-client-id.apps.googleusercontent.com"
+# google_oauth_client_secret = "your-client-secret"
+
+# Optional: Cloud CDN URL map invalidation on Firestore / site bucket updates
+# enable_cloud_cdn = false
+# cdn_url_map      = ""
+
 # GitHub Actions deployer trust (defaults shown). Trust is pinned to the numeric repository id.
 # github_repository    = "Brendon20011007/Google-Cloud-Project"
 # github_repository_id = "1420258600"
