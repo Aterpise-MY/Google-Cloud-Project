@@ -107,7 +107,7 @@ jobs:
         run: python -m pytest "Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/tests" -ra
 
   docker:
-    name: Docker build + /healthz smoke
+    name: Docker build + /health smoke
     needs: changes
     if: needs.changes.outputs.image == 'true' || needs.changes.outputs.workflows == 'true' || inputs.run_all == true
     runs-on: ubuntu-24.04
@@ -120,21 +120,21 @@ jobs:
       - name: Build image (never pushed)
         run: docker build --platform linux/amd64 -t ledger-pipeline:ci "Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline"
 
-      - name: Run with only PORT and poll /healthz (max 30 s)
+      - name: Run with only PORT and poll /health (max 30 s)
         run: |
           docker run -d --name ledger-ci -e PORT=8080 -p 127.0.0.1:8080:8080 ledger-pipeline:ci
-          body="$RUNNER_TEMP/healthz.json"
+          body="$RUNNER_TEMP/health.json"
           code=none
           deadline=$((SECONDS + 30))
           while [ "$SECONDS" -lt "$deadline" ]; do
-            code=$(curl -s -o "$body" -w '%{http_code}' --max-time 3 http://127.0.0.1:8080/healthz) || true
+            code=$(curl -s -o "$body" -w '%{http_code}' --max-time 3 http://127.0.0.1:8080/health) || true
             if [ "$code" = "200" ] && jq -e '.status == "ok"' "$body" >/dev/null 2>&1; then
-              echo "GET /healthz -> 200 $(cat "$body")"
+              echo "GET /health -> 200 $(cat "$body")"
               exit 0
             fi
             sleep 1
           done
-          echo "::error::GET /healthz did not return 200 {\"status\":\"ok\"} within 30 s (last HTTP status: ${code})"
+          echo "::error::GET /health did not return 200 {\"status\":\"ok\"} within 30 s (last HTTP status: ${code})"
           exit 1
 
       - name: Container logs

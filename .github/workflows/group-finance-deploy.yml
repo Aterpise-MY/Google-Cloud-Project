@@ -1,9 +1,17 @@
 # Group Finance production deploy: main == production, there is no staging environment.
 #
 # Push to main that changes what goes into the image -> full CI -> build + push
-# ledger-pipeline:sha-<commit> -> deploy that digest as a revision with NO traffic -> tag it ->
-# read-only smoke test on the tagged URL -> route LATEST = 100% -> remove the tag.
+# ledger-pipeline:sha-<commit> -> deploy that digest as a revision with NO traffic and a
+# cand-<sha7> tag -> check that revision's own conditions (Ready, not Retired, nothing False) ->
+# read-only smoke test on the tag URL -> route LATEST = 100% -> remove the tag.
 # If anything fails, traffic never moves off the revision that was serving before.
+#
+# Two Cloud Run facts this sequence depends on (issue #9):
+# - A revision deployed with --no-traffic and no tag is never started. Cloud Run marks it Retired
+#   (Active=False) without running or health-checking a container. The tag makes the revision
+#   routable, so Cloud Run starts it and health-checks it during the deploy.
+# - status.latestReadyRevisionName is the latest revision that is SERVING traffic, so a 0% candidate
+#   never becomes it. Readiness is read from the candidate revision's own conditions instead.
 #
 # This workflow never runs Terraform. Terraform owns env, secrets, scaling and IAM, and ignores
 # image/traffic/client on the Cloud Run service (see Group Finance/terraform/main.tf).
@@ -111,44 +119,94 @@ jobs:
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           echo "ref=${IMAGE}@${digest}" >> "$GITHUB_OUTPUT"
 
-      # --no-traffic pins the current traffic to the revision serving it, so the new revision
-      # gets 0%. No --tag/--revision-suffix here: either would make gcloud write an explicit
-      # revision name into the service template, which Terraform would then see as drift.
-      - name: Deploy candidate revision (no traffic)
+      # Its own step, so the tag name is a recorded output before anything is deployed:
+      # "Remove candidate tag" then runs whenever the deploy below may have written the tag,
+      # even if the deploy step fails halfway through.
+      - name: Name the candidate tag
+        id: tag
+        run: |
+          # Valid Cloud Run tag: lowercase letters, digits and hyphens, starting with a letter.
+          echo "name=cand-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # Google's documented way to test a revision before it gets traffic: --no-traffic AND --tag
+      # (https://docs.cloud.google.com/run/docs/rollouts-rollbacks-traffic-migration#deploy-tagged).
+      # --no-traffic pins the current traffic by name to the revision(s) serving it, so the
+      # candidate gets 0%. The tag gives the candidate its own URL, which makes it routable, so
+      # Cloud Run starts and health-checks it. Without the tag the candidate is retired unstarted.
+      # Readiness comes from the candidate revision's own conditions. status.latestReadyRevisionName
+      # is the latest revision serving traffic, which a 0% candidate never is.
+      # --tag also makes gcloud name the revision itself and pin that name in the service template
+      # (see the lifecycle block in Group Finance/terraform/main.tf for what Terraform does with it).
+      - name: Deploy candidate revision (no traffic, tagged)
         id: deploy
         env:
           IMAGE_REF: ${{ steps.image.outputs.ref }}
           PREV: ${{ steps.before.outputs.revision }}
+          TAG: ${{ steps.tag.outputs.name }}
         run: |
-          gcloud run deploy "$SERVICE" --image "$IMAGE_REF" --region "$REGION" --project "$PROJECT_ID" --no-traffic --quiet
+          gcloud run deploy "$SERVICE" --image "$IMAGE_REF" --region "$REGION" --project "$PROJECT_ID" --no-traffic --tag "$TAG" --quiet
           gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT_ID" --format=json > "$RUNNER_TEMP/after.json"
-          rev=$(jq -r '.status.latestCreatedRevisionName // empty' "$RUNNER_TEMP/after.json")
-          ready=$(jq -r '.status.latestReadyRevisionName // empty' "$RUNNER_TEMP/after.json")
+          candidate=$(jq -r '.status.latestCreatedRevisionName // empty' "$RUNNER_TEMP/after.json")
+          if [ -z "$candidate" ] || [ "$candidate" = "$PREV" ]; then
+            echo "::error::No new revision was created (latest created: '$candidate', previous: '$PREV')"; exit 1
+          fi
+          echo "revision=$candidate" >> "$GITHUB_OUTPUT" # now, so the job summary names it if a check below fails
           img=$(jq -r '.spec.template.spec.containers[0].image // empty' "$RUNNER_TEMP/after.json")
           if [ "$img" != "$IMAGE_REF" ]; then
             echo "::error::Service template image is '$img', expected '$IMAGE_REF'"; exit 1
           fi
-          if [ -z "$rev" ] || [ "$rev" != "$ready" ] || [ "$rev" = "$PREV" ]; then
-            echo "::error::No new ready revision (latest created: '$rev', latest ready: '$ready', previous: '$PREV')"; exit 1
+          tag_rev=$(jq -r --arg t "$TAG" '[.status.traffic[]? | select(.tag == $t) | .revisionName] | first // empty' "$RUNNER_TEMP/after.json")
+          url=$(jq -r --arg t "$TAG" '[.status.traffic[]? | select(.tag == $t) | .url] | first // empty' "$RUNNER_TEMP/after.json")
+          if [ "$tag_rev" != "$candidate" ] || [[ "$url" != https://* ]]; then
+            echo "::error::Tag $TAG does not route to the candidate $candidate (tag points at '$tag_rev', URL '$url')"; exit 1
           fi
-          echo "Candidate revision: $rev"
-          echo "revision=$rev" >> "$GITHUB_OUTPUT"
-
-      - name: Tag candidate revision
-        id: tag
-        env:
-          CANDIDATE: ${{ steps.deploy.outputs.revision }}
-        run: |
-          # Valid Cloud Run tag: lowercase letters, digits and hyphens, starting with a letter.
-          tag="cand-${GITHUB_SHA::7}"
-          # Record the name before mutating anything so the cleanup step runs even if this step fails.
-          echo "name=$tag" >> "$GITHUB_OUTPUT"
-          gcloud run services update-traffic "$SERVICE" --update-tags "${tag}=${CANDIDATE}" --region "$REGION" --project "$PROJECT_ID" --quiet
-          url=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT_ID" --format=json \
-            | jq -r --arg t "$tag" '[.status.traffic[]? | select(.tag == $t) | .url] | first // empty')
-          if [[ "$url" != https://* ]]; then
-            echo "::error::No URL for tag $tag"; exit 1
-          fi
+          # The candidate revision's own conditions, re-checked for up to ~60 s because its status
+          # can trail the deploy. Always fatal: Ready missing or not True; reason Retired on
+          # Ready/Active/ResourcesAvailable (the never-started revision of issue #9 is Ready=True
+          # with reason Retired); Active or ContainerHealthy present but not True. Preferred is
+          # Ready, Active and ContainerHealthy all True. Cloud Run does not document that a 0%
+          # tagged revision reports Active/ContainerHealthy, so if they are still missing after the
+          # last check the candidate is accepted with a warning: the smoke test on the tag URL below
+          # is what proves it serves.
+          # shellcheck disable=SC2016 # a jq program: $c and $t are jq variables
+          seen_jq='(.status.conditions // []) as $c | ["Ready", "Active", "ContainerHealthy", "ResourcesAvailable"]
+            | map(. as $t | (first($c[] | select(.type == $t)) // null)
+                | if . == null then (if $t == "ResourcesAvailable" then empty else "\($t)=missing" end)
+                  else "\($t)=\(.status)\(if .reason then " (\(.reason))" else "" end)" end)
+            | join(", ")'
+          # "strict": Ready, Active, ContainerHealthy all True. "relaxed": no fatal condition, but
+          # Active and/or ContainerHealthy missing. "fail": anything else.
+          # shellcheck disable=SC2016 # a jq program: $t, $ready and $retired are jq variables
+          verdict_jq='def cond($t): first(.status.conditions[]? | select(.type == $t)) // null;
+            def true_or_missing($t): cond($t) | . == null or .status == "True";
+            (cond("Ready") | . != null and .status == "True") as $ready
+            | any(.status.conditions[]?; (.type == "Ready" or .type == "Active" or .type == "ResourcesAvailable")
+                and .reason == "Retired") as $retired
+            | if ($ready and ($retired | not) and true_or_missing("Active") and true_or_missing("ContainerHealthy")) | not then "fail"
+              elif cond("Active") != null and cond("ContainerHealthy") != null then "strict"
+              else "relaxed" end'
+          for attempt in $(seq 1 12); do
+            gcloud run revisions describe "$candidate" --region "$REGION" --project "$PROJECT_ID" --format=json > "$RUNNER_TEMP/candidate.json"
+            rev_img=$(jq -r '.spec.containers[0].image // empty' "$RUNNER_TEMP/candidate.json")
+            if [ "$rev_img" != "$IMAGE_REF" ]; then
+              echo "::error::Candidate $candidate runs image '$rev_img', expected '$IMAGE_REF'"; exit 1
+            fi
+            seen=$(jq -r "$seen_jq" "$RUNNER_TEMP/candidate.json")
+            verdict=$(jq -r "$verdict_jq" "$RUNNER_TEMP/candidate.json")
+            if [ "$verdict" = "strict" ]; then
+              break
+            fi
+            if [ "$attempt" -eq 12 ]; then
+              if [ "$verdict" = "relaxed" ]; then
+                echo "::warning::Candidate $candidate: $seen. Ready=True and nothing Retired or failing, but Active/ContainerHealthy never appeared: accepting it and relying on the smoke test to prove it serves."
+                break
+              fi
+              echo "::error::Candidate $candidate never became ready (last seen: $seen)"; exit 1
+            fi
+            echo "Candidate $candidate: $seen (check ${attempt}); re-checking in 5 s"
+            sleep 5
+          done
+          echo "Candidate revision: $candidate ($seen)"
           echo "Candidate URL: $url"
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
@@ -156,7 +214,7 @@ jobs:
       # Read-only GETs only. Never /sync, /close, /api, or any POST from here.
       - name: Smoke test candidate (read-only)
         env:
-          URL: ${{ steps.tag.outputs.url }}
+          URL: ${{ steps.deploy.outputs.url }}
         run: |
           probe() { # path, check ("json-ok" or "status-only")
             local path=$1 check=$2 code attempt
@@ -172,7 +230,8 @@ jobs:
             echo "::error::GET ${path} on the candidate never returned the expected 200"
             return 1
           }
-          probe /healthz json-ok
+          # Cloud Run reserves /healthz (Google Frontend answers 404), so probe /health.
+          probe /health json-ok
           probe /manage status-only
 
       - name: Promote candidate (LATEST = 100%)
@@ -180,9 +239,13 @@ jobs:
         env:
           CANDIDATE: ${{ steps.deploy.outputs.revision }}
         run: |
-          latest=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT_ID" --format='value(status.latestReadyRevisionName)')
+          # --to-latest sends all traffic to the most recently created revision. Only go ahead if
+          # that is still the tested candidate (nothing, e.g. a terraform apply, created a newer
+          # one since the smoke test). Not latestReadyRevisionName: that is the revision serving
+          # traffic now, never the 0% candidate.
+          latest=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT_ID" --format='value(status.latestCreatedRevisionName)')
           if [ "$latest" != "$CANDIDATE" ]; then
-            echo "::error::Latest ready revision is '$latest', not the tested candidate '$CANDIDATE'; refusing to route traffic."
+            echo "::error::Latest created revision is '$latest', not the tested candidate '$CANDIDATE'; refusing to route traffic."
             exit 1
           fi
           # LATEST (not the revision name), so revisions Terraform later creates for env/secret

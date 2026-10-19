@@ -196,6 +196,8 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         return allow_netlify and verify_netlify_signature(
             request.headers.get("X-Webhook-Signature"), request.get_data(), settings.netlify_jws_secret)
 
+    # Cloud Run reserves /healthz (Google Frontend answers it); the deploy smoke test uses /health.
+    @app.get("/health")
     @app.get("/healthz")
     def healthz():
         return jsonify(status="ok")
