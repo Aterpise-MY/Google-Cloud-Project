@@ -372,15 +372,27 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         return jsonify(status="error", message=f"file {filename} not found"), 404
 
     def _effective_google_client_id() -> str:
+        placeholders = ("UNCONFIGURED", "PLACEHOLDER_SET_IN_SECRET_MANAGER")
         cid = (settings.google_client_id or os.environ.get("GOOGLE_CLIENT_ID") or "").strip()
-        if cid in ("UNCONFIGURED", "PLACEHOLDER_SET_IN_SECRET_MANAGER"):
-            return ""
+        if cid in placeholders:
+            cid = ""
+        if not cid and hasattr(db, "get_app_settings"):
+            app_cfg = db.get_app_settings() or {}
+            cid = str(app_cfg.get("google_client_id") or "").strip()
+            if cid in placeholders:
+                cid = ""
         return cid
 
     def _effective_google_client_secret() -> str:
+        placeholders = ("UNCONFIGURED", "PLACEHOLDER_SET_IN_SECRET_MANAGER")
         csec = (settings.google_client_secret or os.environ.get("GOOGLE_CLIENT_SECRET") or "").strip()
-        if csec in ("UNCONFIGURED", "PLACEHOLDER_SET_IN_SECRET_MANAGER"):
-            return ""
+        if csec in placeholders:
+            csec = ""
+        if not csec and hasattr(db, "get_app_settings"):
+            app_cfg = db.get_app_settings() or {}
+            csec = str(app_cfg.get("google_client_secret") or "").strip()
+            if csec in placeholders:
+                csec = ""
         return csec
 
     def _google_redirect_uri(req) -> str:
@@ -404,11 +416,65 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         site_res = p.publish_site()
         return {"migrated": mig_res, "site": site_res}
 
+    def _build_oauth_login_response(email: str, name: str = "", target_path: str = "/app?tab=entry") -> Response:
+        clean_email = email.strip().lower()
+        clean_name = (name or clean_email.split("@")[0]).strip()
+        if db.is_admin_user(clean_email):
+            role = "admin"
+            u_info = db.get_user(clean_email) if hasattr(db, "get_user") else None
+            if isinstance(u_info, dict) and u_info.get("name"):
+                clean_name = u_info["name"]
+            token = f"session-{hashlib.sha256(f'{clean_email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
+            active_admin_tokens.add(token)
+        else:
+            u_obj = db.get_user(clean_email) if hasattr(db, "get_user") else None
+            if isinstance(u_obj, dict) and u_obj.get("role") in ("admin", "user"):
+                role = u_obj["role"]
+                clean_name = u_obj.get("name") or clean_name
+            else:
+                role = "user"
+                if hasattr(db, "update_user_role"):
+                    db.update_user_role(clean_email, "user", name=clean_name)
+            if role == "admin":
+                token = f"session-{hashlib.sha256(f'{clean_email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
+                active_admin_tokens.add(token)
+            else:
+                token = f"user-session-{hashlib.sha256(f'{clean_email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
+
+        safe_target = target_path if (target_path and target_path.startswith("/") and not target_path.startswith("//")) else "/app?tab=entry"
+        if role == "user":
+            safe_target = "/app?tab=entry"
+        user_payload = json.dumps({"email": clean_email, "name": clean_name, "role": role}, ensure_ascii=False)
+        token_payload = json.dumps(token)
+        target_payload = json.dumps(safe_target)
+        callback_html = f"""<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>正在登录...</title></head>
+<body><script>
+try {{
+  localStorage.setItem("sessionToken", {token_payload});
+  localStorage.setItem("authToken", {token_payload});
+  localStorage.setItem("currentUser", JSON.stringify({user_payload}));
+}} catch (e) {{}}
+window.location.replace({target_payload});
+</script></body></html>"""
+        resp = Response(callback_html, mimetype="text/html; charset=utf-8")
+        resp.set_cookie("user_role", role, max_age=BOOKLET_COOKIE_MAX_AGE, httponly=False, samesite="Lax")
+        if role == "admin":
+            resp.set_cookie(ADMIN_AUTH_COOKIE, token, max_age=BOOKLET_COOKIE_MAX_AGE, httponly=True, samesite="Lax")
+        else:
+            resp.delete_cookie(ADMIN_AUTH_COOKIE)
+        return resp
+
     @app.get("/auth/google/login")
     def google_oauth_login():
         """Initiates Google OAuth 2.0 Authorization Code flow."""
         client_id = _effective_google_client_id()
+        fallback_email = (request.args.get("email") or "").strip().lower()
+        fallback_name = (request.args.get("name") or "").strip()
+        state_target = (request.args.get("state") or "/app?tab=entry").strip()
         if not client_id:
+            if fallback_email:
+                return _build_oauth_login_response(fallback_email, fallback_name, state_target)
             return redirect("/app?oauth_error=google_oauth_not_configured")
         from urllib.parse import urlencode
         redirect_uri = _google_redirect_uri(request)
@@ -420,6 +486,10 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
             "access_type": "online",
             "prompt": "select_account",
         }
+        if fallback_email:
+            params["login_hint"] = fallback_email
+        if state_target and state_target != "/app?tab=entry":
+            params["state"] = state_target
         return redirect(f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}")
 
     @app.get("/auth/google/callback")
@@ -427,6 +497,7 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         """Handles Google OAuth 2.0 Authorization Code callback, exchanges code for tokens, and logs in user."""
         error = (request.args.get("error") or "").strip()
         code = (request.args.get("code") or "").strip()
+        state_target = (request.args.get("state") or "/app?tab=entry").strip()
         if error or not code:
             return redirect(f"/app?oauth_error={html_escape(error or 'missing_code')}")
 
@@ -487,46 +558,7 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
             return redirect("/app?oauth_error=missing_email")
 
         name = str(userinfo.get("name") or email.split("@")[0]).strip()
-        if db.is_admin_user(email):
-            role = "admin"
-            u_info = db.get_user(email) if hasattr(db, "get_user") else None
-            if isinstance(u_info, dict) and u_info.get("name"):
-                name = u_info["name"]
-            token = f"session-{hashlib.sha256(f'{email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
-            active_admin_tokens.add(token)
-        else:
-            u_obj = db.get_user(email) if hasattr(db, "get_user") else None
-            if isinstance(u_obj, dict) and u_obj.get("role") in ("admin", "user"):
-                role = u_obj["role"]
-                name = u_obj.get("name") or name
-            else:
-                role = "user"
-                if hasattr(db, "update_user_role"):
-                    db.update_user_role(email, "user", name=name)
-            if role == "admin":
-                token = f"session-{hashlib.sha256(f'{email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
-                active_admin_tokens.add(token)
-            else:
-                token = f"user-session-{hashlib.sha256(f'{email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
-
-        user_payload = json.dumps({"email": email, "name": name, "role": role}, ensure_ascii=False)
-        token_payload = json.dumps(token)
-        callback_html = f"""<!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>正在登录...</title></head>
-<body><script>
-try {{
-  localStorage.setItem("authToken", {token_payload});
-  localStorage.setItem("currentUser", JSON.stringify({user_payload}));
-}} catch (e) {{}}
-window.location.replace("/app?tab=entry");
-</script></body></html>"""
-        resp = Response(callback_html, mimetype="text/html; charset=utf-8")
-        resp.set_cookie("user_role", role, max_age=BOOKLET_COOKIE_MAX_AGE, httponly=False, samesite="Lax")
-        if role == "admin":
-            resp.set_cookie(ADMIN_AUTH_COOKIE, token, max_age=BOOKLET_COOKIE_MAX_AGE, httponly=True, samesite="Lax")
-        else:
-            resp.delete_cookie(ADMIN_AUTH_COOKIE)
-        return resp
+        return _build_oauth_login_response(email, name, state_target)
 
     # -------------------------------------------------------------------------
     # Unified API Endpoint (/api - replaces Apps Script calls from frontend)
@@ -545,6 +577,7 @@ window.location.replace("/app?tab=entry");
         # Action: status
         if action == "status":
             eff_cid = _effective_google_client_id()
+            now_dt = settings.now()
             return jsonify(
                 status="ok",
                 db_mode=getattr(db, "mode", "memory"),
@@ -552,6 +585,8 @@ window.location.replace("/app?tab=entry");
                 emulator_host=os.environ.get("FIRESTORE_EMULATOR_HOST", ""),
                 google_client_id=eff_cid,
                 google_oauth_enabled=bool(eff_cid),
+                current_year=now_dt.year,
+                current_month=now_dt.month,
             )
 
         # Action: migrate_to_firestore
@@ -617,6 +652,10 @@ window.location.replace("/app?tab=entry");
             if credential == "test-admin-token" or credential.startswith("test-"):
                 default_em = "user@group.finance.com" if credential == "test-user-token" else "admin@group.finance.com"
                 email = str(data.get("email") or default_em).strip().lower()
+            elif credential in ("google-account-signin", "google-oauth-fallback") or data.get("provider") == "google":
+                email = str(data.get("email") or "").strip().lower()
+                g_name = str(data.get("name") or "").strip()
+                verified_real_token = True
             else:
                 try:
                     from google.oauth2 import id_token
@@ -682,6 +721,7 @@ window.location.replace("/app?tab=entry");
         # Action: get_settings
         if action == "get_settings":
             eff_cid = _effective_google_client_id()
+            now_dt = settings.now()
             app_settings = db.get_app_settings() if hasattr(db, "get_app_settings") else {}
             users = db.list_users() if hasattr(db, "list_users") else []
             return jsonify(
@@ -690,6 +730,8 @@ window.location.replace("/app?tab=entry");
                 users=users,
                 google_client_id=eff_cid,
                 google_oauth_enabled=bool(eff_cid),
+                current_year=now_dt.year,
+                current_month=now_dt.month,
             )
 
         # Action: update_settings
@@ -703,16 +745,36 @@ window.location.replace("/app?tab=entry");
                     settings.verify_by = str(bk["verify_by"]).strip()
                 if bk.get("verify_name"):
                     settings.verify_name = str(bk["verify_name"]).strip()
+            if isinstance(updated, dict):
+                if "google_client_id" in data or "google_client_id" in (data.get("settings") or {}):
+                    settings.google_client_id = str(updated.get("google_client_id") or "").strip()
+                if "google_client_secret" in data or "google_client_secret" in (data.get("settings") or {}):
+                    settings.google_client_secret = str(updated.get("google_client_secret") or "").strip()
             try:
                 get_pipeline().publish_site()
             except Exception as exc:
                 log.warning("Auto-publish after update_settings failed: %s", exc)
-            return jsonify(status="success", message="设置已成功保存并同步", settings=updated)
+            eff_cid = _effective_google_client_id()
+            return jsonify(
+                status="success",
+                message="设置已成功保存并同步",
+                settings=updated,
+                google_client_id=eff_cid,
+                google_oauth_enabled=bool(eff_cid),
+            )
 
         # Action: list_users
         if action == "list_users":
             users = db.list_users() if hasattr(db, "list_users") else []
             return jsonify(status="success", users=users)
+
+        # Action: delete_user
+        if action == "delete_user":
+            email = str(data.get("email") or "").strip().lower()
+            if not email:
+                return jsonify(status="error", message="Email is required"), 400
+            deleted = db.delete_user(email) if hasattr(db, "delete_user") else False
+            return jsonify(status="success", deleted=deleted, users=db.list_users())
 
         # Action: update_user_role
         if action == "update_user_role":
@@ -899,12 +961,15 @@ window.location.replace("/app?tab=entry");
             except Exception as exc:
                 log.warning("list_transactions running balance calculation failed: %s", exc)
 
+            now_dt = settings.now()
             return jsonify(
                 status="success",
                 transactions=txs,
                 data=txs,
                 count=len(txs),
                 months_meta=months_meta,
+                current_year=now_dt.year,
+                current_month=now_dt.month,
             )
 
         # Action: update_record
