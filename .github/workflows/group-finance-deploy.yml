@@ -23,6 +23,12 @@ on:
     # Only changes that end up in the image. Workflow, tests-only, apps_script, terraform,
     # deploy/, scripts/ and docs changes do not deploy. The exclusion must stay last.
     paths:
+      - "**/pipeline/ledger_pipeline/**"
+      - "**/pipeline/frontend/**"
+      - "**/pipeline/preview_site/**"
+      - "**/pipeline/requirements.txt"
+      - "**/pipeline/Dockerfile"
+      - "**/pipeline/.dockerignore"
       - "Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/ledger_pipeline/**"
       - "Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/frontend/**"
       - "Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/preview_site/**"
@@ -53,7 +59,8 @@ jobs:
     name: CI
     uses: ./.github/workflows/group-finance-ci.yml
     with:
-      run_all: true
+      run_all: ${{ github.event_name == 'workflow_dispatch' }}
+      skip_docker: true
     permissions:
       contents: read
       pull-requests: read # ceiling for the called workflow's `changes` job

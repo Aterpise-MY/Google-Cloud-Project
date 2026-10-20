@@ -771,15 +771,13 @@ class FirestoreAndAdminTests(unittest.TestCase):
         self.db = FirestoreLedgerDB()
 
     def test_admin_user_verification(self):
-        # Default active admins
-        self.assertTrue(self.db.is_admin_user("admin@group.finance.com"))
-        self.assertTrue(self.db.is_admin_user("admin@groupfinance.com"))
-        self.assertTrue(self.db.is_admin_user("brendon.ang20011007@gmail.com"))
+        # Default active admin
+        self.assertTrue(self.db.is_admin_user("hengga1007@gmail.com"))
         # Case insensitive & whitespace trimmed
-        self.assertTrue(self.db.is_admin_user(" ADMIN@GROUP.FINANCE.COM "))
-        self.assertTrue(self.db.is_admin_user(" ADMIN@GROUPFINANCE.COM "))
+        self.assertTrue(self.db.is_admin_user(" HENGGA1007@GMAIL.COM "))
 
         # Non-admin user returns False
+        self.assertFalse(self.db.is_admin_user("ejenrivaldo5011@gmail.com"))
         self.assertFalse(self.db.is_admin_user("unknown@groupfinance.com"))
         # Add new admin user
         user = self.db.add_admin_user("newadmin@groupfinance.com", name="Lead Admin")
@@ -794,11 +792,12 @@ class FirestoreAndAdminTests(unittest.TestCase):
         self.assertFalse(self.db.is_admin_user(""))
 
     def test_admin_group_finance_booklet_and_verification(self):
-        # 1. Assert db.is_admin_user("admin@group.finance.com") is True
-        self.assertTrue(self.db.is_admin_user("admin@group.finance.com"))
+        # 1. Assert db.is_admin_user("hengga1007@gmail.com") is True and legacy verify_user works
+        self.assertTrue(self.db.is_admin_user("hengga1007@gmail.com"))
+        self.assertTrue(self.db.verify_user("hengga1007@gmail.com", "Abc1234#"))
         self.assertTrue(self.db.verify_user("admin@group.finance.com", "Abc1234#"))
 
-        # 2. Assert booklet login succeeds with admin@group.finance.com
+        # 2. Assert booklet login succeeds with hengga1007@gmail.com and admin@group.finance.com
         from ledger_pipeline.service import create_app
         from ledger_pipeline.sources import FirestoreSource
         with tempfile.TemporaryDirectory() as td:
@@ -810,7 +809,7 @@ class FirestoreAndAdminTests(unittest.TestCase):
             c = app.test_client()
 
             # Booklet login with booklet_password
-            r_post1 = c.post("/booklet", data={"username": "admin@group.finance.com", "password": "configured-pw"})
+            r_post1 = c.post("/booklet", data={"username": "hengga1007@gmail.com", "password": "configured-pw"})
             self.assertEqual(r_post1.status_code, 302)
             set_cookies1 = r_post1.headers.getlist("Set-Cookie")
             self.assertTrue(any("booklet_auth=" in sc for sc in set_cookies1))
@@ -915,11 +914,11 @@ class FirestoreAndAdminTests(unittest.TestCase):
         self.assertEqual(data["user"]["role"], "admin")
         self.assertIn("admin_auth=", r.headers.get("Set-Cookie", ""))
 
-        # Verify admin@ebteq.desk is whitelisted by default
-        r_ebteq = c.post("/api", json={"action": "google_login", "credential": "test-admin-token",
-                                       "email": "admin@ebteq.desk"})
-        self.assertEqual(r_ebteq.status_code, 200)
-        self.assertEqual(r_ebteq.get_json()["user"]["email"], "admin@ebteq.desk")
+        # Verify hengga1007@gmail.com is whitelisted by default
+        r_brendon = c.post("/api", json={"action": "google_login", "credential": "test-admin-token",
+                                         "email": "hengga1007@gmail.com"})
+        self.assertEqual(r_brendon.status_code, 200)
+        self.assertEqual(r_brendon.get_json()["user"]["email"], "hengga1007@gmail.com")
 
         # Verify /app route serves the application
         r_app = c.get("/app")
@@ -1093,20 +1092,21 @@ class FirestoreAndAdminTests(unittest.TestCase):
             app = create_app(s, pipeline=p, db=self.db)
             c = app.test_client()
 
-            # 1. List users includes default admins and standard users
+            # 1. List users includes only default admin (hengga1007@gmail.com) and standard user (ejenrivaldo5011@gmail.com)
             r_list = c.post("/api", json={"action": "list_users"})
             self.assertEqual(r_list.status_code, 200)
             users = r_list.get_json()["users"]
             emails = {u["email"]: u["role"] for u in users}
-            self.assertEqual(emails.get("admin@group.finance.com"), "admin")
-            self.assertEqual(emails.get("rivaldo@group.finance.com"), "user")
-            self.assertEqual(emails.get("user@group.finance.com"), "user")
+            self.assertEqual(emails, {
+                "hengga1007@gmail.com": "admin",
+                "ejenrivaldo5011@gmail.com": "user",
+            })
 
             # 2. Standard user login via google_login
             r_user_login = c.post("/api", json={
                 "action": "google_login",
                 "credential": "test-user-token",
-                "email": "rivaldo@group.finance.com",
+                "email": "ejenrivaldo5011@gmail.com",
             })
             self.assertEqual(r_user_login.status_code, 200)
             login_data = r_user_login.get_json()
@@ -1122,23 +1122,39 @@ class FirestoreAndAdminTests(unittest.TestCase):
             # 4. Promote standard user to admin via update_user_role
             r_promote = c.post("/api", json={
                 "action": "update_user_role",
-                "email": "rivaldo@group.finance.com",
+                "email": "ejenrivaldo5011@gmail.com",
                 "role": "admin",
                 "name": "Rivaldo Lead",
             })
             self.assertEqual(r_promote.status_code, 200)
             self.assertEqual(r_promote.get_json()["user"]["role"], "admin")
-            self.assertTrue(self.db.is_admin_user("rivaldo@group.finance.com"))
+            self.assertTrue(self.db.is_admin_user("ejenrivaldo5011@gmail.com"))
 
             # 5. Demote back to user
             r_demote = c.post("/api", json={
                 "action": "update_user_role",
-                "email": "rivaldo@group.finance.com",
+                "email": "ejenrivaldo5011@gmail.com",
                 "role": "user",
             })
             self.assertEqual(r_demote.status_code, 200)
             self.assertEqual(r_demote.get_json()["user"]["role"], "user")
-            self.assertFalse(self.db.is_admin_user("rivaldo@group.finance.com"))
+            self.assertFalse(self.db.is_admin_user("ejenrivaldo5011@gmail.com"))
+
+            # 6. Add a temporary user and delete via delete_user action
+            c.post("/api", json={
+                "action": "update_user_role",
+                "email": "temp@example.com",
+                "role": "user",
+                "name": "Temp User",
+            })
+            self.assertIsNotNone(self.db.get_user("temp@example.com"))
+            r_del_user = c.post("/api", json={
+                "action": "delete_user",
+                "email": "temp@example.com",
+            })
+            self.assertEqual(r_del_user.status_code, 200)
+            self.assertTrue(r_del_user.get_json()["deleted"])
+            self.assertIsNone(self.db.get_user("temp@example.com"))
 
     def test_get_booklet_data(self):
         from ledger_pipeline.service import create_app
@@ -1305,58 +1321,98 @@ class FirestoreAndAdminTests(unittest.TestCase):
         self.assertEqual(s_real.google_client_secret, "test-oauth-sec")
         self.assertNotIn("test-oauth-sec", repr(s_real))
 
-        app = create_app(s_real, db=self.db)
-        c = app.test_client()
+        with tempfile.TemporaryDirectory() as td:
+            with unittest.mock.patch.dict(os.environ, {"SITE_DIR": td}):
+                app = create_app(s_real, db=self.db)
+                c = app.test_client()
 
-        # 2. /api status and get_settings expose google_client_id & google_oauth_enabled
-        r_st = c.get("/api?action=status")
-        self.assertEqual(r_st.get_json()["google_client_id"], "12345-abc.apps.googleusercontent.com")
-        self.assertTrue(r_st.get_json()["google_oauth_enabled"])
+                # 2. /api status and get_settings expose google_client_id & google_oauth_enabled & current_year/current_month
+                r_st = c.get("/api?action=status")
+                st_json = r_st.get_json()
+                self.assertEqual(st_json["google_client_id"], "12345-abc.apps.googleusercontent.com")
+                self.assertTrue(st_json["google_oauth_enabled"])
+                self.assertIn("current_year", st_json)
+                self.assertIn("current_month", st_json)
 
-        # 3. /auth/google/login redirects to accounts.google.com with client_id and redirect_uri
-        r_login = c.get("/auth/google/login", headers={"X-Forwarded-Proto": "https", "Host": "finance.example.com"})
-        self.assertEqual(r_login.status_code, 302)
-        loc = r_login.headers["Location"]
-        self.assertIn("https://accounts.google.com/o/oauth2/v2/auth", loc)
-        self.assertIn("client_id=12345-abc.apps.googleusercontent.com", loc)
-        self.assertIn("redirect_uri=https%3A%2F%2Ffinance.example.com%2Fauth%2Fgoogle%2Fcallback", loc)
+                r_cfg = c.post("/api", json={"action": "get_settings"})
+                cfg_json = r_cfg.get_json()
+                self.assertIn("current_year", cfg_json)
+                self.assertIn("current_month", cfg_json)
 
-        # 4. /auth/google/callback exchanges code, logs in admin or user, sets cookies and localStorage
-        fake_token_resp = MagicMock()
-        fake_token_resp.ok = True
-        fake_token_resp.content = b'{"access_token": "test-access-tok", "id_token": "fake.jwt.token"}'
-        fake_token_resp.json.return_value = {"access_token": "test-access-tok", "id_token": "fake.jwt.token"}
+                # 3. /auth/google/login redirects to accounts.google.com with client_id and redirect_uri
+                r_login = c.get("/auth/google/login", headers={"X-Forwarded-Proto": "https", "Host": "finance.example.com"})
+                self.assertEqual(r_login.status_code, 302)
+                loc = r_login.headers["Location"]
+                self.assertIn("https://accounts.google.com/o/oauth2/v2/auth", loc)
+                self.assertIn("client_id=12345-abc.apps.googleusercontent.com", loc)
+                self.assertIn("redirect_uri=https%3A%2F%2Ffinance.example.com%2Fauth%2Fgoogle%2Fcallback", loc)
 
-        with patch("requests.post", return_value=fake_token_resp) as mock_post:
-            with patch("google.oauth2.id_token.verify_oauth2_token", return_value={
-                "email": "brendon.ang20011007@gmail.com",
-                "name": "Brendon Ang",
-            }):
-                r_cb = c.get("/auth/google/callback?code=auth-code-xyz")
-                self.assertEqual(r_cb.status_code, 200)
-                html = r_cb.get_data(as_text=True)
-                self.assertIn("localStorage.setItem(\"authToken\"", html)
-                self.assertIn("brendon.ang20011007@gmail.com", html)
-                self.assertIn("\"role\": \"admin\"", html)
-                cookies = r_cb.headers.getlist("Set-Cookie")
-                self.assertTrue(any("admin_auth=session-" in ck for ck in cookies))
-                self.assertTrue(any("user_role=admin" in ck for ck in cookies))
-                mock_post.assert_called_once()
+                # 4. /auth/google/callback exchanges code, logs in admin or user, sets cookies and localStorage (both sessionToken and authToken)
+                fake_token_resp = MagicMock()
+                fake_token_resp.ok = True
+                fake_token_resp.content = b'{"access_token": "test-access-tok", "id_token": "fake.jwt.token"}'
+                fake_token_resp.json.return_value = {"access_token": "test-access-tok", "id_token": "fake.jwt.token"}
 
-        # Standard user callback auto-registers and sets user_role=user
-        with patch("requests.post", return_value=fake_token_resp):
-            with patch("google.oauth2.id_token.verify_oauth2_token", return_value={
-                "email": "newmember@gmail.com",
-                "name": "New Member",
-            }):
-                r_cb_user = c.get("/auth/google/callback?code=auth-code-user")
-                self.assertEqual(r_cb_user.status_code, 200)
-                html_u = r_cb_user.get_data(as_text=True)
-                self.assertIn("newmember@gmail.com", html_u)
-                self.assertIn("\"role\": \"user\"", html_u)
-                cookies_u = r_cb_user.headers.getlist("Set-Cookie")
-                self.assertTrue(any("user_role=user" in ck for ck in cookies_u))
-                self.assertEqual(self.db.get_user("newmember@gmail.com")["role"], "user")
+                with patch("requests.post", return_value=fake_token_resp) as mock_post:
+                    with patch("google.oauth2.id_token.verify_oauth2_token", return_value={
+                        "email": "hengga1007@gmail.com",
+                        "name": "Brendon",
+                    }):
+                        r_cb = c.get("/auth/google/callback?code=auth-code-xyz")
+                        self.assertEqual(r_cb.status_code, 200)
+                        html = r_cb.get_data(as_text=True)
+                        self.assertIn("localStorage.setItem(\"sessionToken\"", html)
+                        self.assertIn("localStorage.setItem(\"authToken\"", html)
+                        self.assertIn("hengga1007@gmail.com", html)
+                        self.assertIn("\"role\": \"admin\"", html)
+                        cookies = r_cb.headers.getlist("Set-Cookie")
+                        self.assertTrue(any("admin_auth=session-" in ck for ck in cookies))
+                        self.assertTrue(any("user_role=admin" in ck for ck in cookies))
+                        mock_post.assert_called_once()
+
+                # Standard user callback auto-registers and sets user_role=user
+                with patch("requests.post", return_value=fake_token_resp):
+                    with patch("google.oauth2.id_token.verify_oauth2_token", return_value={
+                        "email": "newmember@gmail.com",
+                        "name": "New Member",
+                    }):
+                        r_cb_user = c.get("/auth/google/callback?code=auth-code-user")
+                        self.assertEqual(r_cb_user.status_code, 200)
+                        html_u = r_cb_user.get_data(as_text=True)
+                        self.assertIn("newmember@gmail.com", html_u)
+                        self.assertIn("\"role\": \"user\"", html_u)
+                        cookies_u = r_cb_user.headers.getlist("Set-Cookie")
+                        self.assertTrue(any("user_role=user" in ck for ck in cookies_u))
+                        self.assertEqual(self.db.get_user("newmember@gmail.com")["role"], "user")
+
+                # 5. Google Account Sign-In chooser API action (credential="google-account-signin")
+                r_g_admin = c.post("/api", json={
+                    "action": "google_login",
+                    "credential": "google-account-signin",
+                    "email": "hengga1007@gmail.com",
+                    "name": "Brendon",
+                })
+                self.assertEqual(r_g_admin.status_code, 200)
+                self.assertEqual(r_g_admin.get_json()["user"]["role"], "admin")
+
+                r_g_user = c.post("/api", json={
+                    "action": "google_login",
+                    "credential": "google-account-signin",
+                    "email": "fellowship.member@gmail.com",
+                    "name": "Fellowship Member",
+                })
+                self.assertEqual(r_g_user.status_code, 200)
+                self.assertEqual(r_g_user.get_json()["user"]["role"], "user")
+
+                # 6. Runtime update of google_client_id via update_settings
+                r_upd_oauth = c.post("/api", json={
+                    "action": "update_settings",
+                    "google_client_id": "99999-runtime.apps.googleusercontent.com",
+                    "google_client_secret": "GOCSPX-runtime-secret",
+                })
+                self.assertEqual(r_upd_oauth.status_code, 200)
+                self.assertEqual(r_upd_oauth.get_json()["google_client_id"], "99999-runtime.apps.googleusercontent.com")
+                self.assertTrue(r_upd_oauth.get_json()["google_oauth_enabled"])
 
     def test_migrate_workbook_to_firestore_and_cdn_sync(self):
         from scripts.migrate_xlsx_to_firestore import extract_transactions_from_raw_sheets, _write_transactions_to_db

@@ -13,7 +13,11 @@ on:
   workflow_call:
     inputs:
       run_all:
-        description: Run every job regardless of which paths changed (used by the deploy workflow)
+        description: Run every job regardless of which paths changed (used by manual workflow_dispatch deploy)
+        type: boolean
+        default: false
+      skip_docker:
+        description: Skip the Docker build smoke test job (used by deploy workflow which builds and smoke-tests the image itself)
         type: boolean
         default: false
 
@@ -33,15 +37,21 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read # paths-filter lists the PR's files through the API; no checkout needed
+      pull-requests: read # paths-filter lists the PR's files through the API on PRs
     outputs:
       python: ${{ steps.filter.outputs.python }}
       image: ${{ steps.filter.outputs.image }}
-      workflows: ${{ steps.filter.outputs.workflows }}
     steps:
+      # On push events (via workflow_call from deploy), dorny/paths-filter needs a shallow git checkout
+      # to diff against the previous commit; on pull_request events it queries the GitHub API directly.
+      - name: Checkout for push diff
+        if: ${{ !inputs.run_all && github.event_name != 'pull_request' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
       # Skipped when run_all is true: outputs stay empty and every job runs through `inputs.run_all`.
-      # (The deploy workflow calls this from push/workflow_dispatch, where the API-based PR file
-      # listing does not apply.)
       - name: Filter changed files
         id: filter
         if: ${{ !inputs.run_all }}
@@ -52,29 +62,36 @@ jobs:
           predicate-quantifier: some-with-excludes
           filters: |
             python:
+              - '**/pipeline/ledger_pipeline/**'
+              - '**/pipeline/tests/**'
+              - '**/pipeline/requirements.txt'
+              - '**/pipeline/requirements-dev.txt'
               - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/ledger_pipeline/**'
               - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/tests/**'
-              - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/frontend/**'
-              - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/preview_site/**'
               - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/requirements.txt'
               - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/requirements-dev.txt'
+              - '.github/workflows/group-finance-ci.yml'
               - '!**/*.md'
             image:
+              - '**/pipeline/ledger_pipeline/**'
+              - '**/pipeline/frontend/**'
+              - '**/pipeline/preview_site/**'
+              - '**/pipeline/requirements.txt'
+              - '**/pipeline/Dockerfile'
+              - '**/pipeline/.dockerignore'
               - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/ledger_pipeline/**'
               - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/frontend/**'
               - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/preview_site/**'
               - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/requirements.txt'
               - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/Dockerfile'
               - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/pipeline/.dockerignore'
-              - '!**/*.md'
-            workflows:
-              - '.github/workflows/group-finance-*.yml'
+              - '.github/workflows/group-finance-ci.yml'
               - '!**/*.md'
 
   pytest:
     name: pytest (Python 3.14)
     needs: changes
-    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.workflows == 'true' || inputs.run_all == true
+    if: needs.changes.outputs.python == 'true' || inputs.run_all == true
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -105,7 +122,7 @@ jobs:
   docker:
     name: Docker build + /health smoke
     needs: changes
-    if: needs.changes.outputs.image == 'true' || needs.changes.outputs.workflows == 'true' || inputs.run_all == true
+    if: (needs.changes.outputs.image == 'true' || inputs.run_all == true) && !inputs.skip_docker
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -137,10 +154,11 @@ jobs:
         if: failure()
         run: docker logs ledger-ci 2>&1 || true
 
-  # Runs on every PR and every deploy whatever changed: in a public repository this is the one
-  # check that also covers Terraform, docs and workflow changes.
+  # Runs on every PR whatever changed: in a public repository this is the one
+  # check that also covers Terraform, docs and workflow changes before merge.
   secret-scan:
     name: Secret scan (gitleaks, new commits only)
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:

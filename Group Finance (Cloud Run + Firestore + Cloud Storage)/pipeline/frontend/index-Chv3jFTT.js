@@ -459,11 +459,8 @@ const DEFAULT_BOOKLET_SETTINGS = {
 };
 
 const DEFAULT_USER_ACCOUNTS = [
-  { email: "brendon.ang20011007@gmail.com", name: "Brendon", role: "admin" },
-  { email: "admin@group.finance.com", name: "系统管理员", role: "admin" },
-  { email: "admin@ebteq.desk", name: "财务主管", role: "admin" },
-  { email: "rivaldo@group.finance.com", name: "Rivaldo", role: "user" },
-  { email: "user@group.finance.com", name: "普通同工", role: "user" }
+  { email: "hengga1007@gmail.com", name: "Brendon", role: "admin" },
+  { email: "ejenrivaldo5011@gmail.com", name: "Rivaldo", role: "user" }
 ];
 
 const INITIAL_SEED_TRANSACTIONS = [
@@ -497,7 +494,7 @@ const INITIAL_SEED_TRANSACTIONS = [
 
 // --- API Client ---
 async function apiPost(action, payload = {}) {
-  const token = localStorage.getItem("sessionToken");
+  const token = localStorage.getItem("sessionToken") || localStorage.getItem("authToken");
   const headers = { "Content-Type": "application/json" };
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
@@ -751,74 +748,31 @@ function GoogleLogoSvg({ size = 18 }) {
 function LoginScreen({ onLoginSuccess, userAccounts, googleClientId, initialError }) {
   const [emailInput, setEmailInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(initialError || null);
+  const [error, setError] = useState(() => {
+    if (!initialError) return null;
+    if (initialError === "google_oauth_not_configured") {
+      return "Google OAuth 尚未配置 GOOGLE_CLIENT_ID，请联系管理员或在后台配置 OAuth Client ID。";
+    }
+    return initialError;
+  });
   const googleBtnContainerRef = useRef(null);
 
   useEffect(() => {
-    if (initialError) setError(initialError);
+    if (initialError === "google_oauth_not_configured") {
+      setError("Google OAuth 尚未配置 GOOGLE_CLIENT_ID，请联系管理员或在后台配置 OAuth Client ID。");
+    } else if (initialError) {
+      setError(initialError);
+    }
   }, [initialError]);
 
   const accountsList = userAccounts && userAccounts.length > 0 ? userAccounts : DEFAULT_USER_ACCOUNTS;
 
-  // Handle Google Identity Services ID Token Credential Response
-  const handleGoogleCredentialResponse = useCallback(async (response) => {
-    if (!response || !response.credential) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const { ok, data } = await apiPost("google_login", {
-        credential: response.credential
-      });
-      if (ok && data && data.status === "success" && data.user) {
-        onLoginSuccess(data.token || "session-google-token", data.user);
-      } else {
-        setError(data?.message || "Google 账号登录验证失败，请重试");
-      }
-    } catch {
-      setError("Google 登录请求失败，请检查网络连接或使用下方邮箱登录");
-    } finally {
-      setLoading(false);
-    }
-  }, [onLoginSuccess]);
-
-  // Initialize Google Identity Services button when googleClientId is configured
-  useEffect(() => {
-    if (!googleClientId) return;
-    let timer = null;
-    const tryInitGsi = () => {
-      if (window.google && window.google.accounts && window.google.accounts.id) {
-        try {
-          window.google.accounts.id.initialize({
-            client_id: googleClientId,
-            callback: handleGoogleCredentialResponse
-          });
-          if (googleBtnContainerRef.current) {
-            window.google.accounts.id.renderButton(googleBtnContainerRef.current, {
-              theme: "outline",
-              size: "large",
-              width: 360,
-              text: "signin_with",
-              shape: "pill"
-            });
-          }
-        } catch {
-          // Ignore GSI initialization error
-        }
-      } else {
-        timer = setTimeout(tryInitGsi, 400);
-      }
-    };
-    tryInitGsi();
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
-  }, [googleClientId, handleGoogleCredentialResponse]);
-
-  // Redirect to Backend Google OAuth 2.0 Authorization Code Flow
+  // Redirect directly to Backend Google OAuth 2.0 Authorization Code Flow (accounts.google.com)
   const handleGoogleOAuthLogin = () => {
     setLoading(true);
     setError(null);
-    window.location.href = "/auth/google/login";
+    const targetState = window.location.pathname + window.location.search;
+    window.location.href = `/auth/google/login?state=${encodeURIComponent(targetState)}`;
   };
 
   const performLoginWithAccount = async (acc) => {
@@ -885,7 +839,7 @@ function LoginScreen({ onLoginSuccess, userAccounts, googleClientId, initialErro
           h("h1", { className: "text-2xl font-black text-slate-900 tracking-tight" }, "小组财务系统")
         ),
         h("p", { className: "text-xs text-slate-500 font-medium" },
-          "请使用 Google 账号或输入邮箱登录系统"
+          "请使用 Google 账号登录系统"
         )
       ),
 
@@ -896,8 +850,8 @@ function LoginScreen({ onLoginSuccess, userAccounts, googleClientId, initialErro
         h("span", null, error)
       ),
 
-      // Primary Action: Google Account Sign-In
-      h("div", { className: "space-y-3 mb-6" },
+      // Primary Action: Google Account Sign-In (Single Button)
+      h("div", { className: "space-y-3" },
         h("button", {
           type: "button",
           disabled: loading,
@@ -906,76 +860,6 @@ function LoginScreen({ onLoginSuccess, userAccounts, googleClientId, initialErro
         },
           h(GoogleLogoSvg, { size: 20 }),
           h("span", null, "使用 Google 账号登录 (Sign in with Google)")
-        ),
-        googleClientId && h("div", {
-          ref: googleBtnContainerRef,
-          className: "flex justify-center overflow-hidden"
-        })
-      ),
-
-      // Divider
-      h("div", { className: "relative my-5 text-center" },
-        h("div", { className: "absolute inset-0 flex items-center" },
-          h("div", { className: "w-full border-t border-slate-200" })
-        ),
-        h("span", { className: "relative px-3 bg-white text-[11px] font-bold text-slate-400 uppercase tracking-wider" },
-          "或使用邮箱登录"
-        )
-      ),
-
-      // Email Login Form
-      h("form", { onSubmit: handleEmailFormSubmit, className: "space-y-3.5 mb-6" },
-        h("div", null,
-          h("label", { className: "block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5 ml-1" },
-            "邮箱登录 (Email Login)"
-          ),
-          h("div", { className: "flex gap-2" },
-            h("input", {
-              type: "email",
-              value: emailInput,
-              onChange: (e) => setEmailInput(e.target.value),
-              placeholder: "请输入您的邮箱地址...",
-              className: "flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm font-medium text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-            }),
-            h("button", {
-              type: "submit",
-              disabled: loading,
-              className: "px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm rounded-2xl shadow-md shadow-indigo-500/20 transition-all active:scale-95 shrink-0 disabled:opacity-50"
-            },
-              loading ? "登录中..." : "登录系统"
-            )
-          )
-        )
-      ),
-
-      // Divider
-      h("div", { className: "relative my-5 text-center" },
-        h("div", { className: "absolute inset-0 flex items-center" },
-          h("div", { className: "w-full border-t border-slate-200" })
-        ),
-        h("span", { className: "relative px-3 bg-white text-[11px] font-bold text-slate-400 uppercase tracking-wider" },
-          "快捷账号登录"
-        )
-      ),
-
-      // Unified Quick Account List (No Admin/User labels shown)
-      h("div", { className: "p-4 rounded-2xl bg-slate-50/90 border border-slate-200/80 space-y-2" },
-        accountsList.map((acc) =>
-          h("button", {
-            key: acc.email,
-            type: "button",
-            disabled: loading,
-            onClick: () => performLoginWithAccount(acc),
-            className: "w-full py-2.5 px-3.5 bg-white hover:bg-indigo-50/60 text-slate-800 rounded-xl border border-slate-200 hover:border-indigo-300 font-bold text-xs flex items-center justify-between transition-all shadow-2xs active:scale-[0.99]"
-          },
-            h("div", { className: "flex items-center gap-2 truncate" },
-              h(Jy, { size: 14, className: "text-indigo-600 shrink-0" }),
-              h("span", { className: "truncate" }, `${acc.name} (${acc.email})`)
-            ),
-            h("span", { className: "px-2.5 py-0.5 bg-indigo-600 text-white rounded-md text-[10px] shrink-0 ml-2" },
-              "点击登录 →"
-            )
-          )
         )
       )
     )
@@ -1337,11 +1221,25 @@ function DatabaseViewTab({
   onUpdateUserAccounts,
   bookletSettings,
   onUpdateBookletSettings,
+  googleClientId,
+  onUpdateGoogleOAuth,
   showToast
 }) {
   const [subTab, setSubTab] = useState("ledger"); // "ledger" | "categories" | "permissions"
-  const [yearFilter, setYearFilter] = useState("2026");
-  const [monthFilter, setMonthFilter] = useState("1"); // Default to Month 1 to showcase Balance b/f clearly, or "all"
+  const [yearFilter, setYearFilter] = useState(() => {
+    try {
+      const p = new URLSearchParams(window.location.search).get("year");
+      if (p) return p;
+    } catch {}
+    return String(new Date().getFullYear() || 2026);
+  });
+  const [monthFilter, setMonthFilter] = useState(() => {
+    try {
+      const p = new URLSearchParams(window.location.search).get("month");
+      if (p) return p;
+    } catch {}
+    return String(new Date().getMonth() + 1);
+  });
   const [searchQuery, setSearchQuery] = useState("");
   const [createItem, setCreateItem] = useState(null);
   const [editItem, setEditItem] = useState(null);
@@ -1363,6 +1261,17 @@ function DatabaseViewTab({
     verify_name: bookletSettings?.verify_name || "Rivaldo",
     opening_balance: bookletSettings?.opening_balance ?? 693
   }));
+  const [oauthForm, setOauthForm] = useState(() => ({
+    google_client_id: googleClientId || "",
+    google_client_secret: ""
+  }));
+  const [oauthSaveStatus, setOauthSaveStatus] = useState("");
+
+  useEffect(() => {
+    if (googleClientId) {
+      setOauthForm((prev) => ({ ...prev, google_client_id: googleClientId }));
+    }
+  }, [googleClientId]);
 
   useEffect(() => {
     if (bookletSettings) {
@@ -1559,7 +1468,7 @@ function DatabaseViewTab({
 
   const handleRemoveUserAccount = (email) => {
     const updated = userAccounts.filter((u) => u.email.toLowerCase() !== email.toLowerCase());
-    onUpdateUserAccounts(updated, null);
+    onUpdateUserAccounts(updated, null, email);
   };
 
   // Handle Save Booklet Metadata
@@ -2208,6 +2117,83 @@ function DatabaseViewTab({
             )
           )
         )
+      ),
+
+      // Section C: Google OAuth 2.0 Login Configuration
+      h("div", { className: "bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 space-y-5" },
+        h("div", { className: "flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100" },
+          h("div", null,
+            h("h3", { className: "text-base font-black text-slate-800 flex items-center gap-2" },
+              h(GoogleLogoSvg, { size: 18 }),
+              "🔑 Google OAuth 2.0 账号登录配置 (Google Sign-In Config)"
+            ),
+            h("p", { className: "text-xs text-slate-500 mt-0.5" },
+              "配置 Google Cloud Console 的 OAuth 2.0 客户端 ID 与密钥，允许同工使用 Google 账号一键安全登录"
+            )
+          ),
+          h("span", {
+            className: `px-3 py-1 rounded-xl text-xs font-bold border ${
+              googleClientId
+                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                : "bg-blue-50 text-blue-700 border-blue-200"
+            }`
+          }, googleClientId ? "✅ OAuth Client ID 已启用" : "⚡ 内置 Google 账号选择器已启用")
+        ),
+
+        h("form", {
+          onSubmit: async (e) => {
+            e.preventDefault();
+            if (onUpdateGoogleOAuth) {
+              await onUpdateGoogleOAuth(oauthForm.google_client_id.trim(), oauthForm.google_client_secret.trim());
+              setOauthSaveStatus("✅ Google OAuth 2.0 配置已保存并实时生效！");
+              setTimeout(() => setOauthSaveStatus(""), 4000);
+            }
+          },
+          className: "space-y-4"
+        },
+          h("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-4" },
+            h("div", null,
+              h("label", { className: "block text-xs font-bold text-slate-600 mb-1" }, "Google OAuth Client ID"),
+              h("input", {
+                type: "text",
+                value: oauthForm.google_client_id,
+                onChange: (e) => setOauthForm({ ...oauthForm, google_client_id: e.target.value }),
+                placeholder: "例如：1234567890-abc.apps.googleusercontent.com",
+                className: "w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500/20"
+              })
+            ),
+            h("div", null,
+              h("label", { className: "block text-xs font-bold text-slate-600 mb-1" }, "Google OAuth Client Secret (可选)"),
+              h("input", {
+                type: "password",
+                value: oauthForm.google_client_secret,
+                onChange: (e) => setOauthForm({ ...oauthForm, google_client_secret: e.target.value }),
+                placeholder: "GOCSPX-••••••••••••••••••••",
+                className: "w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500/20"
+              })
+            )
+          ),
+
+          h("div", { className: "p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2" },
+            h("div", null,
+              h("span", { className: "font-bold text-slate-700" }, "已授权的重定向 URI (Authorized Redirect URI): "),
+              h("code", { className: "px-2 py-0.5 bg-white border border-slate-200 rounded-md font-mono text-indigo-700" },
+                `${typeof window !== "undefined" ? window.location.origin : ""}/auth/google/callback`
+              )
+            ),
+            oauthSaveStatus && h("span", { className: "font-bold text-emerald-600" }, oauthSaveStatus)
+          ),
+
+          h("div", { className: "flex justify-end" },
+            h("button", {
+              type: "submit",
+              className: "px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-500/20 transition-all active:scale-95 flex items-center gap-2"
+            },
+              h(CheckCircleIcon, { size: 15 }),
+              "💾 保存 Google 登录配置"
+            )
+          )
+        )
       )
     ),
 
@@ -2494,8 +2480,8 @@ function BookletViewTab({
   onNavigateTab,
   onLogout
 }) {
-  const [selectedMonth, setSelectedMonth] = useState(1); // 1..12 or "all"
-  const [selectedYear, setSelectedYear] = useState(2026);
+  const [selectedMonth, setSelectedMonth] = useState(() => new Date().getMonth() + 1); // 1..12 or "all"
+  const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear() || 2026);
 
   const yearLedger = useMemo(() => {
     const initialBf = selectedYear === 2026 ? (Number(bookletSettings?.opening_balance) || 693) : 0;
@@ -2730,14 +2716,7 @@ function BookletViewTab({
 // ============================================================================
 function GroupFinanceApp() {
   // 1. User Accounts & Role Configuration State
-  const [userAccounts, setUserAccounts] = useState(() => {
-    try {
-      const saved = localStorage.getItem("gf_user_accounts");
-      return saved ? JSON.parse(saved) : DEFAULT_USER_ACCOUNTS;
-    } catch {
-      return DEFAULT_USER_ACCOUNTS;
-    }
-  });
+  const [userAccounts, setUserAccounts] = useState(() => DEFAULT_USER_ACCOUNTS);
 
   // 2. Current Logged-in User State (Null until logged in, or restored from active session)
   const [currentUser, setCurrentUser] = useState(() => {
@@ -2745,23 +2724,26 @@ function GroupFinanceApp() {
       const params = new URLSearchParams(window.location.search);
       const roleParam = params.get("role");
       if (roleParam === "user") {
-        const u = { email: "rivaldo@group.finance.com", name: "Rivaldo", role: "user" };
+        const u = { email: "ejenrivaldo5011@gmail.com", name: "Rivaldo", role: "user" };
         localStorage.setItem("sessionToken", "session-user-token");
         localStorage.setItem("currentUser", JSON.stringify(u));
         return u;
       }
       if (roleParam === "admin") {
-        const a = { email: "admin@group.finance.com", name: "Brendon", role: "admin" };
+        const a = { email: "hengga1007@gmail.com", name: "Brendon", role: "admin" };
         localStorage.setItem("sessionToken", "session-admin-token");
         localStorage.setItem("currentUser", JSON.stringify(a));
         return a;
       }
-      const token = localStorage.getItem("sessionToken");
+      const token = localStorage.getItem("sessionToken") || localStorage.getItem("authToken");
       const savedUser = localStorage.getItem("currentUser");
       if (token && savedUser) {
+        if (!localStorage.getItem("sessionToken")) {
+          localStorage.setItem("sessionToken", token);
+        }
         const parsed = JSON.parse(savedUser);
         if (parsed && parsed.email) {
-          const inferredRole = parsed.role || (parsed.email.includes("admin") || parsed.email.includes("brendon") ? "admin" : "user");
+          const inferredRole = parsed.role || (parsed.email.toLowerCase() === "hengga1007@gmail.com" || parsed.email.includes("admin") ? "admin" : "user");
           return {
             email: parsed.email,
             name: parsed.name || parsed.email.split("@")[0],
@@ -3058,9 +3040,16 @@ function GroupFinanceApp() {
     showToast("✅ 收入与支出事项分类已更新并同步至记账录入！");
   }, [showToast]);
 
-  const handleUpdateUserAccounts = useCallback(async (nextAccounts, changedAccount) => {
+  const handleUpdateUserAccounts = useCallback(async (nextAccounts, changedAccount, removedEmail) => {
     setUserAccounts(nextAccounts);
     localStorage.setItem("gf_user_accounts", JSON.stringify(nextAccounts));
+    if (removedEmail) {
+      try {
+        await apiPost("delete_user", { email: removedEmail });
+      } catch {
+        // Ignore offline error
+      }
+    }
     if (changedAccount) {
       try {
         await apiPost("update_user_role", {
@@ -3088,6 +3077,18 @@ function GroupFinanceApp() {
       // Persisted in localStorage
     }
     showToast("✅ 奉献册子表头与签名配置已保存并实时同步！");
+  }, [showToast]);
+
+  const handleUpdateGoogleOAuth = useCallback(async (clientId, clientSecret) => {
+    setGoogleClientId(clientId);
+    try {
+      const payload = { google_client_id: clientId };
+      if (clientSecret) payload.google_client_secret = clientSecret;
+      await apiPost("update_settings", payload);
+    } catch {
+      // Ignore offline error
+    }
+    showToast("✅ Google OAuth 登录配置已保存！");
   }, [showToast]);
 
   // Login Handler: Check role permission & route to appropriate workspace
@@ -3182,6 +3183,8 @@ function GroupFinanceApp() {
         onUpdateUserAccounts: handleUpdateUserAccounts,
         bookletSettings,
         onUpdateBookletSettings: handleUpdateBookletSettings,
+        googleClientId,
+        onUpdateGoogleOAuth: handleUpdateGoogleOAuth,
         showToast
       }),
 

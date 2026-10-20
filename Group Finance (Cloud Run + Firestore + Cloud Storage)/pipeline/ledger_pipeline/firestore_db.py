@@ -24,30 +24,9 @@ def hash_password(password: str) -> str:
 
 
 DEFAULT_ADMIN_USERS: Dict[str, Dict[str, Any]] = {
-    "admin@group.finance.com": {
-        "email": "admin@group.finance.com",
-        "name": "Admin",
-        "role": "admin",
-        "status": "active",
-        "password_hash": hash_password("Abc1234#"),
-    },
-    "admin@ebteq.desk": {
-        "email": "admin@ebteq.desk",
-        "name": "Admin (Ebteq Desk)",
-        "role": "admin",
-        "status": "active",
-        "password_hash": hash_password("Abc1234#"),
-    },
-    "admin@groupfinance.com": {
-        "email": "admin@groupfinance.com",
-        "name": "Admin",
-        "role": "admin",
-        "status": "active",
-        "password_hash": hash_password("Abc1234#"),
-    },
-    "brendon.ang20011007@gmail.com": {
-        "email": "brendon.ang20011007@gmail.com",
-        "name": "Brendon Ang",
+    "hengga1007@gmail.com": {
+        "email": "hengga1007@gmail.com",
+        "name": "Brendon",
         "role": "admin",
         "status": "active",
         "password_hash": hash_password("Abc1234#"),
@@ -56,16 +35,9 @@ DEFAULT_ADMIN_USERS: Dict[str, Dict[str, Any]] = {
 
 
 DEFAULT_STANDARD_USERS: Dict[str, Dict[str, Any]] = {
-    "rivaldo@group.finance.com": {
-        "email": "rivaldo@group.finance.com",
+    "ejenrivaldo5011@gmail.com": {
+        "email": "ejenrivaldo5011@gmail.com",
         "name": "Rivaldo",
-        "role": "user",
-        "status": "active",
-        "password_hash": hash_password("User1234#"),
-    },
-    "user@group.finance.com": {
-        "email": "user@group.finance.com",
-        "name": "普通同工",
         "role": "user",
         "status": "active",
         "password_hash": hash_password("User1234#"),
@@ -141,6 +113,8 @@ class FirestoreLedgerDB:
             "income_items": list(DEFAULT_INCOME_ITEMS),
             "expense_items": list(DEFAULT_EXPENSE_ITEMS),
             "booklet": dict(DEFAULT_BOOKLET_SETTINGS),
+            "google_client_id": "",
+            "google_client_secret": "",
         }
         self._init_client()
 
@@ -492,7 +466,7 @@ class FirestoreLedgerDB:
             if mem_hash and mem_hash == target_hash:
                 return True
 
-        # Default fallback credentials (admin / admin@group.finance.com / admin@groupfinance.com)
+        # Default fallback credentials (admin / hengga1007@gmail.com / admin@group.finance.com / admin@groupfinance.com)
         # with default admin password (Abc1234#) or booklet password
         booklet_pwd = os.environ.get("BOOKLET_PASSWORD", "").strip()
         is_default_pass = (
@@ -500,7 +474,7 @@ class FirestoreLedgerDB:
             or target_hash == "778f21dfa476222f26f95f47da9b080c1c991d121a659598e9a643487f9f5110"
             or (bool(booklet_pwd) and password == booklet_pwd)
         )
-        if clean_user in ("admin", "admin@group.finance.com", "admin@groupfinance.com"):
+        if clean_user in ("admin", "hengga1007@gmail.com", "admin@group.finance.com", "admin@groupfinance.com"):
             if is_default_pass:
                 return True
         return False
@@ -595,32 +569,71 @@ class FirestoreLedgerDB:
     def list_users(self) -> List[Dict[str, Any]]:
         """Returns list of all users (email, name, role, status) sorted with admins first then by email."""
         merged: Dict[str, Dict[str, Any]] = {}
-        for k, u in self._memory_users.items():
-            em = str(u.get("email") or k).lower().strip()
-            merged[em] = {
-                "email": em,
-                "name": u.get("name") or em.split("@")[0],
-                "role": u.get("role", "user"),
-                "status": u.get("status", "active"),
-            }
         if self._client:
             try:
+                fs_users: Dict[str, Dict[str, Any]] = {}
                 for d in self._client.collection("users").stream():
                     data = d.to_dict() or {}
                     em = str(data.get("email") or d.id).lower().strip()
                     if em:
-                        merged[em] = {
+                        fs_users[em] = {
                             "email": em,
                             "name": data.get("name") or em.split("@")[0],
                             "role": data.get("role", "user"),
                             "status": data.get("status", "active"),
                         }
+                if fs_users:
+                    merged = fs_users
+                    new_mem: Dict[str, Dict[str, Any]] = {}
+                    for em, u in fs_users.items():
+                        existing = self._memory_users.get(em, {})
+                        entry = dict(existing)
+                        entry.update(u)
+                        new_mem[em] = entry
+                    self._memory_users = new_mem
             except Exception as exc:
                 log.warning("Firestore list_users failed: %s", exc)
+
+        if not merged:
+            for k, u in self._memory_users.items():
+                em = str(u.get("email") or k).lower().strip()
+                merged[em] = {
+                    "email": em,
+                    "name": u.get("name") or em.split("@")[0],
+                    "role": u.get("role", "user"),
+                    "status": u.get("status", "active"),
+                }
 
         users_list = list(merged.values())
         users_list.sort(key=lambda u: (0 if u.get("role") == "admin" else 1, u.get("email", "")))
         return users_list
+
+    def delete_user(self, email: str) -> bool:
+        """Deletes a user from Firestore 'users' collection and in-memory store."""
+        clean_email = (email or "").lower().strip()
+        if not clean_email:
+            return False
+        deleted = False
+        if clean_email in self._memory_users:
+            self._memory_users.pop(clean_email, None)
+            deleted = True
+        for k in list(self._memory_users.keys()):
+            if str(self._memory_users[k].get("email", "")).lower().strip() == clean_email:
+                self._memory_users.pop(k, None)
+                deleted = True
+        if self._client:
+            try:
+                col = self._client.collection("users")
+                doc_ref = col.document(clean_email)
+                if doc_ref.get().exists:
+                    doc_ref.delete()
+                    deleted = True
+                for d in col.where("email", "==", clean_email).stream():
+                    d.reference.delete()
+                    deleted = True
+            except Exception as exc:
+                log.error("Failed to delete user %s from Firestore: %s", clean_email, exc)
+        return deleted
 
     def update_user_role(self, email: str, role: str, name: Optional[str] = None) -> Dict[str, Any]:
         """Updates or creates a user with the specified role ('admin' or 'user')."""
@@ -660,13 +673,15 @@ class FirestoreLedgerDB:
         return out
 
     def get_app_settings(self) -> Dict[str, Any]:
-        """Returns application settings (income_items, expense_items, booklet metadata)."""
+        """Returns application settings (income_items, expense_items, booklet metadata, google OAuth config)."""
         base_booklet = dict(DEFAULT_BOOKLET_SETTINGS)
         base_booklet.update(self._memory_settings.get("booklet") or {})
         result: Dict[str, Any] = {
             "income_items": list(self._memory_settings.get("income_items") or DEFAULT_INCOME_ITEMS),
             "expense_items": list(self._memory_settings.get("expense_items") or DEFAULT_EXPENSE_ITEMS),
             "booklet": base_booklet,
+            "google_client_id": str(self._memory_settings.get("google_client_id") or "").strip(),
+            "google_client_secret": str(self._memory_settings.get("google_client_secret") or "").strip(),
         }
         if self._client:
             try:
@@ -681,10 +696,16 @@ class FirestoreLedgerDB:
                         for k in ("group_code", "counters", "verify_by", "verify_name"):
                             if data["booklet"].get(k):
                                 result["booklet"][k] = str(data["booklet"][k]).strip()
+                    if "google_client_id" in data and data["google_client_id"] is not None:
+                        result["google_client_id"] = str(data["google_client_id"]).strip()
+                    if "google_client_secret" in data and data["google_client_secret"] is not None:
+                        result["google_client_secret"] = str(data["google_client_secret"]).strip()
                     self._memory_settings = {
                         "income_items": list(result["income_items"]),
                         "expense_items": list(result["expense_items"]),
                         "booklet": dict(result["booklet"]),
+                        "google_client_id": result["google_client_id"],
+                        "google_client_secret": result["google_client_secret"],
                     }
             except Exception as exc:
                 log.warning("Firestore get_app_settings failed: %s", exc)
@@ -693,24 +714,45 @@ class FirestoreLedgerDB:
     def update_app_settings(self, updates: Dict[str, Any]) -> Dict[str, Any]:
         """Updates application settings in Firestore settings/app_config and in-memory store."""
         current = self.get_app_settings()
+        nested = updates.get("settings") if isinstance(updates.get("settings"), dict) else {}
         if "income_items" in updates and isinstance(updates["income_items"], list):
             cleaned_inc = [str(x).strip() for x in updates["income_items"] if str(x).strip()]
+            if cleaned_inc:
+                current["income_items"] = cleaned_inc
+        elif "income_items" in nested and isinstance(nested["income_items"], list):
+            cleaned_inc = [str(x).strip() for x in nested["income_items"] if str(x).strip()]
             if cleaned_inc:
                 current["income_items"] = cleaned_inc
         if "expense_items" in updates and isinstance(updates["expense_items"], list):
             cleaned_exp = [str(x).strip() for x in updates["expense_items"] if str(x).strip()]
             if cleaned_exp:
                 current["expense_items"] = cleaned_exp
-        if "booklet" in updates and isinstance(updates["booklet"], dict):
-            bk = updates["booklet"]
+        elif "expense_items" in nested and isinstance(nested["expense_items"], list):
+            cleaned_exp = [str(x).strip() for x in nested["expense_items"] if str(x).strip()]
+            if cleaned_exp:
+                current["expense_items"] = cleaned_exp
+        bk = updates.get("booklet") if isinstance(updates.get("booklet"), dict) else (
+            nested.get("booklet") if isinstance(nested.get("booklet"), dict) else None
+        )
+        if isinstance(bk, dict):
             for k in ("group_code", "counters", "verify_by", "verify_name"):
                 if k in bk and bk[k] is not None and str(bk[k]).strip():
                     current["booklet"][k] = str(bk[k]).strip()
+        if "google_client_id" in updates and updates["google_client_id"] is not None:
+            current["google_client_id"] = str(updates["google_client_id"]).strip()
+        elif "google_client_id" in nested and nested["google_client_id"] is not None:
+            current["google_client_id"] = str(nested["google_client_id"]).strip()
+        if "google_client_secret" in updates and updates["google_client_secret"] is not None:
+            current["google_client_secret"] = str(updates["google_client_secret"]).strip()
+        elif "google_client_secret" in nested and nested["google_client_secret"] is not None:
+            current["google_client_secret"] = str(nested["google_client_secret"]).strip()
 
         self._memory_settings = {
             "income_items": list(current["income_items"]),
             "expense_items": list(current["expense_items"]),
             "booklet": dict(current["booklet"]),
+            "google_client_id": current.get("google_client_id", ""),
+            "google_client_secret": current.get("google_client_secret", ""),
         }
         if self._client:
             try:
