@@ -8,6 +8,8 @@ on:
       - '**/terraform/**'
       - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/terraform/**'
       - '.github/workflows/group-finance-terraform.yml'
+      - '!**/*.md'
+      - '!**/terraform.tfvars.example'
   push:
     branches:
       - main
@@ -16,6 +18,8 @@ on:
       - 'Group Finance (Cloud Run + Firestore + Cloud Storage)/terraform/**'
       - 'terraform/**'
       - '.github/workflows/group-finance-terraform.yml'
+      - '!**/*.md'
+      - '!**/terraform.tfvars.example'
   workflow_dispatch:
     inputs:
       action:
@@ -34,9 +38,10 @@ on:
         default: ''
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
   pull-requests: write
+  issues: write
 
 concurrency:
   group: terraform-group-finance-${{ github.ref }}
@@ -45,7 +50,7 @@ concurrency:
 jobs:
   terraform:
     name: Terraform (${{ github.event_name == 'workflow_dispatch' && github.event.inputs.action || (github.event_name == 'push' && 'apply' || 'plan') }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       TF_VAR_google_oauth_client_id: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID || vars.GOOGLE_OAUTH_CLIENT_ID || '' }}
       TF_VAR_google_oauth_client_secret: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET || '' }}
@@ -67,24 +72,30 @@ jobs:
           echo "Destroy confirmation passed for project group-511516."
 
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Authenticate to Google Cloud (Workload Identity Federation)
-        uses: google-github-actions/auth@v3.0.0
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER || 'projects/997395841168/locations/global/workloadIdentityPools/github/providers/github-oidc' }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT || 'gh-deployer@group-511516.iam.gserviceaccount.com' }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.5.7
+      - name: Setup Terraform 1.5.7
+        run: |
+          TF_VERSION="1.5.7"
+          curl -fsSL --proto '=https' -o "$RUNNER_TEMP/terraform.zip" \
+            "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip"
+          sudo unzip -q -o "$RUNNER_TEMP/terraform.zip" -d /usr/local/bin
+          rm -f "$RUNNER_TEMP/terraform.zip"
+          terraform -version
 
       - name: Terraform Format Check
         run: terraform fmt -check
 
       - name: Terraform Init
-        run: terraform init
+        run: terraform init -no-color
 
       - name: Terraform Validate
         run: terraform validate -no-color
@@ -114,73 +125,242 @@ jobs:
 
       - name: Post Terraform Plan Comment
         if: ${{ always() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan')) }}
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            const diffPath = path.join(process.env.RUNNER_TEMP || '/tmp', 'tfplan_diff.txt');
-            let planOutput = 'No plan output generated.';
-            if (fs.existsSync(diffPath)) {
-              planOutput = fs.readFileSync(diffPath, 'utf8').trim();
-            }
-            const maxLen = 60000;
-            if (planOutput.length > maxLen) {
-              planOutput = planOutput.slice(0, maxLen) + '\n... (output truncated)';
-            }
-            const outcome = '${{ steps.plan.outcome }}' === 'success' ? 'Succeeded' : 'Failed';
-            const marker = '<!-- terraform-plan-comment -->';
-            const cleanBody = [
-              marker,
-              `### Terraform \`plan\` ${outcome} for Workspace: \`default\``,
-              '',
-              '<details><summary>Show Output</summary>',
-              '',
-              '```diff',
-              planOutput,
-              '```',
-              '',
-              '</details>',
-            ].join('\n');
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLAN_OUTCOME: ${{ steps.plan.outcome }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          node <<'EOF'
+          const fs = require('fs');
+          const path = require('path');
+          const { execFileSync } = require('child_process');
 
-            if (process.env.GITHUB_STEP_SUMMARY) {
-              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, cleanBody + '\n');
-            }
+          const diffPath = path.join(process.env.RUNNER_TEMP || '/tmp', 'tfplan_diff.txt');
+          let planOutput = 'No plan output generated.';
+          if (fs.existsSync(diffPath)) {
+            planOutput = fs.readFileSync(diffPath, 'utf8').trim();
+          }
+          const maxLen = 60000;
+          if (planOutput.length > maxLen) {
+            planOutput = planOutput.slice(0, maxLen) + '\n... (output truncated)';
+          }
+          const outcome = process.env.PLAN_OUTCOME === 'success' ? 'Succeeded' : 'Failed';
+          const marker = '<!-- terraform-plan-comment -->';
+          const cleanBody = [
+            marker,
+            `### Terraform \`plan\` ${outcome} for Workspace: \`default\``,
+            '',
+            '<details><summary>Show Output</summary>',
+            '',
+            '```diff',
+            planOutput,
+            '```',
+            '',
+            '</details>',
+          ].join('\n');
 
-            if (context.eventName === 'pull_request' && context.issue && context.issue.number) {
-              const { data: comments } = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                per_page: 100,
-              });
-              const existing = comments.find(c => c.body && c.body.includes(marker));
-              if (existing) {
-                await github.rest.issues.updateComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: existing.id,
-                  body: cleanBody,
-                });
-              } else {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: context.issue.number,
-                  body: cleanBody,
-                });
-              }
+          if (process.env.GITHUB_STEP_SUMMARY) {
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, cleanBody + '\n');
+          }
+
+          if (process.env.EVENT_NAME === 'pull_request' && process.env.PR_NUMBER) {
+            const bodyFile = path.join(process.env.RUNNER_TEMP || '/tmp', 'tfplan_comment.json');
+            fs.writeFileSync(bodyFile, JSON.stringify({ body: cleanBody }));
+            const commentsRaw = execFileSync('gh', [
+              'api',
+              `repos/${process.env.REPO}/issues/${process.env.PR_NUMBER}/comments?per_page=100`,
+            ], { encoding: 'utf8' });
+            const comments = JSON.parse(commentsRaw);
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              execFileSync('gh', [
+                'api', '-X', 'PATCH',
+                `repos/${process.env.REPO}/issues/comments/${existing.id}`,
+                '--input', bodyFile,
+              ], { stdio: 'inherit' });
+            } else {
+              execFileSync('gh', [
+                'api', '-X', 'POST',
+                `repos/${process.env.REPO}/issues/${process.env.PR_NUMBER}/comments`,
+                '--input', bodyFile,
+              ], { stdio: 'inherit' });
             }
+          }
+          EOF
 
       - name: Check Terraform Plan Status
         if: ${{ steps.plan.outcome == 'failure' }}
         run: exit 1
 
       - name: Terraform Apply (Push or Manual Apply)
+        id: apply
         if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply') }}
+        continue-on-error: true
         run: |
-          terraform plan -no-color -out=tfplan
-          terraform apply -no-color -auto-approve tfplan
+          set +e
+          terraform plan -no-color -input=false -out=tfplan 2>&1 | tee "$RUNNER_TEMP/tfapply_plan.txt"
+          PLAN_EXIT=${PIPESTATUS[0]}
+          if [ "$PLAN_EXIT" -eq 0 ]; then
+            terraform apply -no-color -input=false -auto-approve tfplan 2>&1 | tee "$RUNNER_TEMP/tfapply_raw.txt"
+            APPLY_EXIT=${PIPESTATUS[0]}
+          else
+            cp "$RUNNER_TEMP/tfapply_plan.txt" "$RUNNER_TEMP/tfapply_raw.txt"
+            APPLY_EXIT=$PLAN_EXIT
+          fi
+          terraform output -json > "$RUNNER_TEMP/tfoutputs.json" 2>/dev/null || echo "{}" > "$RUNNER_TEMP/tfoutputs.json"
+          set -e
+
+          if grep -q "Terraform used the selected providers" "$RUNNER_TEMP/tfapply_plan.txt"; then
+            sed -n '/Terraform used the selected providers/,$p' "$RUNNER_TEMP/tfapply_plan.txt" > "$RUNNER_TEMP/tfapply_trimmed.txt"
+            echo "" >> "$RUNNER_TEMP/tfapply_trimmed.txt"
+            cat "$RUNNER_TEMP/tfapply_raw.txt" >> "$RUNNER_TEMP/tfapply_trimmed.txt"
+          else
+            cat "$RUNNER_TEMP/tfapply_plan.txt" "$RUNNER_TEMP/tfapply_raw.txt" > "$RUNNER_TEMP/tfapply_trimmed.txt"
+          fi
+
+          sed -E 's/^([[:space:]]+)([-+~](\/\+|\/-)?|<=)/\2\1/' "$RUNNER_TEMP/tfapply_trimmed.txt" > "$RUNNER_TEMP/tfapply_diff.txt"
+          exit $APPLY_EXIT
+
+      - name: Post Terraform Apply Service Summary & Bot Comment
+        if: ${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')) }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLY_OUTCOME: ${{ steps.apply.outcome }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          node <<'EOF'
+          const fs = require('fs');
+          const path = require('path');
+          const { execFileSync } = require('child_process');
+
+          const tempDir = process.env.RUNNER_TEMP || '/tmp';
+          const diffPath = path.join(tempDir, 'tfapply_diff.txt');
+          const outPath = path.join(tempDir, 'tfoutputs.json');
+
+          let applyOutput = 'No apply output generated.';
+          if (fs.existsSync(diffPath)) {
+            applyOutput = fs.readFileSync(diffPath, 'utf8').trim();
+          }
+          const maxLen = 55000;
+          if (applyOutput.length > maxLen) {
+            applyOutput = applyOutput.slice(0, maxLen) + '\n... (output truncated)';
+          }
+
+          let outputs = {};
+          if (fs.existsSync(outPath)) {
+            try {
+              outputs = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+            } catch (_) {}
+          }
+          const val = (k) => (outputs[k] && !outputs[k].sensitive && outputs[k].value) ? String(outputs[k].value) : null;
+
+          const cloudRunUrl = val('cloud_run_url');
+          const oauthRedirect = val('google_oauth_redirect_uri');
+          const siteBucket = val('site_bucket');
+          const archiveBucket = val('archive_bucket');
+          const arRepo = val('artifact_registry_repository');
+          const deployerSa = val('github_deployer_service_account');
+
+          const outcome = process.env.APPLY_OUTCOME === 'success' ? 'Succeeded' : 'Failed';
+          const marker = '<!-- terraform-apply-comment -->';
+
+          const serviceRows = [];
+          if (cloudRunUrl) {
+            serviceRows.push(`| **Cloud Run Service URL** | ${cloudRunUrl} |`);
+            serviceRows.push(`| **Manage Web App** | ${cloudRunUrl}/manage |`);
+            serviceRows.push(`| **Booklet View** | ${cloudRunUrl}/booklet |`);
+          }
+          if (oauthRedirect) {
+            serviceRows.push(`| **Google OAuth Redirect URI** | \`${oauthRedirect}\` |`);
+          }
+          if (siteBucket) {
+            serviceRows.push(`| **Public Site Bucket (CDN)** | \`gs://${siteBucket}\` (https://storage.googleapis.com/${siteBucket}/index.html) |`);
+          }
+          if (archiveBucket) {
+            serviceRows.push(`| **Private Archive Bucket** | \`gs://${archiveBucket}\` |`);
+          }
+          if (arRepo) {
+            serviceRows.push(`| **Artifact Registry** | \`${arRepo}\` |`);
+          }
+          if (deployerSa) {
+            serviceRows.push(`| **Deployer Service Account** | \`${deployerSa}\` |`);
+          }
+
+          const lines = [
+            marker,
+            `### Terraform \`apply\` ${outcome} for Workspace: \`default\``,
+            '',
+          ];
+
+          if (serviceRows.length > 0) {
+            lines.push('#### Deployed GCP Services');
+            lines.push('');
+            lines.push('| Service / Resource | Endpoint / Value |');
+            lines.push('|---|---|');
+            lines.push(...serviceRows);
+            lines.push('');
+          }
+
+          lines.push('<details><summary>Show Output</summary>');
+          lines.push('');
+          lines.push('```diff');
+          lines.push(applyOutput);
+          lines.push('```');
+          lines.push('');
+          lines.push('</details>');
+
+          const cleanBody = lines.join('\n');
+
+          if (process.env.GITHUB_STEP_SUMMARY) {
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, cleanBody + '\n');
+          }
+
+          const bodyFile = path.join(tempDir, 'tfapply_comment.json');
+          fs.writeFileSync(bodyFile, JSON.stringify({ body: cleanBody }));
+
+          // Post comment on any associated Pull Request for the merged commit; fallback to commit comment
+          let commentedOnPr = false;
+          try {
+            const pullsRaw = execFileSync('gh', [
+              'api',
+              `repos/${process.env.REPO}/commits/${process.env.SHA}/pulls`,
+            ], { encoding: 'utf8' });
+            const pulls = JSON.parse(pullsRaw);
+            if (Array.isArray(pulls) && pulls.length > 0) {
+              for (const pr of pulls) {
+                if (pr && pr.number) {
+                  execFileSync('gh', [
+                    'api', '-X', 'POST',
+                    `repos/${process.env.REPO}/issues/${pr.number}/comments`,
+                    '--input', bodyFile,
+                  ], { stdio: 'inherit' });
+                  commentedOnPr = true;
+                }
+              }
+            }
+          } catch (err) {
+            console.warn('Could not look up PRs for commit:', err.message);
+          }
+
+          if (!commentedOnPr) {
+            try {
+              execFileSync('gh', [
+                'api', '-X', 'POST',
+                `repos/${process.env.REPO}/commits/${process.env.SHA}/comments`,
+                '--input', bodyFile,
+              ], { stdio: 'inherit' });
+            } catch (err) {
+              console.warn('Could not post commit comment:', err.message);
+            }
+          }
+          EOF
+
+      - name: Check Terraform Apply Status
+        if: ${{ steps.apply.outcome == 'failure' }}
+        run: exit 1
 
       - name: Terraform Destroy
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy' }}
