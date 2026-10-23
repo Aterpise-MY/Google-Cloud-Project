@@ -19,13 +19,14 @@ from decimal import Decimal
 from html import escape as html_escape
 from typing import Any, Dict, List, Optional
 
-from flask import Flask, Response, jsonify, redirect, request, send_from_directory
+from flask import Flask, Response, g, jsonify, redirect, request, send_from_directory
 
 from .config import Settings
-from .firestore_db import FirestoreLedgerDB
+from .firestore_db import FirestoreLedgerDB, permissions_for_role
 from .ledger import build_months, last_day_of_month
 from .pipeline import Pipeline, parse_ym
-from .security import verify_netlify_signature, verify_token
+from .security import (SESSION_TTL_SECONDS, derive_session_key, issue_session_token,
+                       verify_netlify_signature, verify_session_token, verify_token)
 
 log = logging.getLogger("ledger")
 
@@ -35,9 +36,94 @@ MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oc
 # Booklet credentials come only from Settings (BOOKLET_USER / BOOKLET_PASSWORD env vars), read in
 # create_app(). There is no default password: unset/empty BOOKLET_PASSWORD disables booklet login.
 BOOKLET_COOKIE = "booklet_auth"
-ADMIN_AUTH_COOKIE = "admin_auth"
+ADMIN_AUTH_COOKIE = "admin_auth"          # legacy cookie: never read, only deleted
 BOOKLET_COOKIE_MAX_AGE = 2592000  # 30 days
-active_admin_tokens: set[str] = set()
+SESSION_COOKIE = "gf_session"             # HttpOnly signed session token (see security.issue_session_token)
+ROLE_HINT_COOKIE = "user_role"            # non-HttpOnly UI hint for static pages; never read for authorization
+SERVICE_IDENTITY_EMAIL = "service:pipeline"
+
+# -----------------------------------------------------------------------------
+# /api authorization: ONE table of action -> required access level, checked before dispatch.
+# Actions missing from the table require a signed-in user, so a new action can never be public by accident.
+# -----------------------------------------------------------------------------
+ACCESS_PUBLIC = "public"
+ACCESS_SIGNED_IN = "signed_in"   # role "user" or "admin"
+ACCESS_ADMIN = "admin"
+
+API_ACTION_ACCESS: Dict[str, str] = {
+    "status": ACCESS_PUBLIC,
+    "login": ACCESS_PUBLIC,
+    "google_login": ACCESS_PUBLIC,
+    "logout": ACCESS_PUBLIC,
+    "get_settings": ACCESS_PUBLIC,
+    "whoami": ACCESS_SIGNED_IN,
+    "add_record": ACCESS_SIGNED_IN,
+    "list_transactions": ACCESS_SIGNED_IN,
+    "get_booklet_data": ACCESS_SIGNED_IN,
+    "get_yearly_summary": ACCESS_SIGNED_IN,
+    "update_record": ACCESS_ADMIN,
+    "delete_record": ACCESS_ADMIN,
+    "get_record": ACCESS_ADMIN,
+    "list_users": ACCESS_ADMIN,
+    "update_user_role": ACCESS_ADMIN,
+    "delete_user": ACCESS_ADMIN,
+    "update_settings": ACCESS_ADMIN,
+    "migrate_to_firestore": ACCESS_ADMIN,
+}
+
+# Mutating actions must be POSTed: /api also accepts GET query params, and SameSite=Lax cookies ride
+# along on top-level cross-site GET navigations.
+API_POST_ONLY_ACTIONS = frozenset({
+    "add_record", "update_record", "delete_record", "update_settings",
+    "update_user_role", "delete_user", "migrate_to_firestore",
+})
+
+ADMIN_ONLY_MESSAGES: Dict[str, str] = {
+    "update_record": "权限不足：仅管理员 (Admin) 可编辑记录。",
+    "delete_record": "权限不足：仅管理员 (Admin) 可删除记录。",
+    "get_record": "权限不足：仅管理员 (Admin) 可查看单条记录详情。",
+    "list_users": "权限不足：仅管理员 (Admin) 可查看用户列表。",
+    "update_user_role": "权限不足：仅管理员 (Admin) 可修改用户权限。",
+    "delete_user": "权限不足：仅管理员 (Admin) 可移除用户。",
+    "update_settings": "权限不足：仅管理员 (Admin) 可修改系统设置。",
+    "migrate_to_firestore": "权限不足：仅管理员 (Admin) 可执行数据迁移。",
+}
+ADMIN_ONLY_DEFAULT_MESSAGE = "权限不足：仅管理员 (Admin) 可执行此操作。"
+UNAUTHENTICATED_MESSAGE = "请先登录。"
+METHOD_NOT_ALLOWED_MESSAGE = "此操作仅支持 POST 请求。(This action requires POST.)"
+
+# Credentials that only ever existed for local development. Accepted only with ALLOW_DEV_LOGIN=1.
+DEV_LOGIN_CREDENTIALS = ("google-account-signin", "google-oauth-fallback")
+
+
+def _is_dev_credential(credential: str, data: Dict[str, Any]) -> bool:
+    return (credential.startswith("test-") or credential in DEV_LOGIN_CREDENTIALS
+            or str(data.get("provider") or "").strip().lower() == "google")
+
+
+def _strip_secrets(value: Any) -> Any:
+    """Copy of `value` without any mapping key containing "secret" (case-insensitive), at any depth."""
+    if isinstance(value, dict):
+        return {k: _strip_secrets(v) for k, v in value.items() if "secret" not in str(k).lower()}
+    if isinstance(value, list):
+        return [_strip_secrets(v) for v in value]
+    return value
+
+
+def _js_literal(value: Any) -> str:
+    """JSON literal that is safe to inline inside a <script> element."""
+    return (json.dumps(value, ensure_ascii=False)
+            .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+            .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
+
+
+def _safe_redirect_target(target: Optional[str], default: str = "/app?tab=entry") -> str:
+    """Only same-origin absolute paths; rejects //host, /\\host and control characters."""
+    t = (target or "").strip()
+    if (not t.startswith("/") or t.startswith("//") or "\\" in t
+            or any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in t)):
+        return default
+    return t
 
 
 def booklet_token(user: str, password: str) -> str:
@@ -79,7 +165,7 @@ BOOKLET_LOGIN_HTML = """<!DOCTYPE html>
       <div>
         <label class="block text-xs font-semibold text-slate-600 mb-1">账号 (Username)</label>
         <input type="text" name="username" value="{username}" required autofocus
-               placeholder="admin@group.finance.com"
+               placeholder="admin"
                class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
       </div>
 
@@ -192,6 +278,14 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         log.warning("BOOKLET_PASSWORD is not set: /booklet login is disabled "
                     "(form login returns 503; basic auth and booklet_auth cookies are rejected)")
 
+    session_key, session_key_source = derive_session_key(settings.session_secret, settings.pipeline_token)
+    if session_key_source == "random":
+        log.warning("SESSION_SECRET and PIPELINE_TOKEN are not set: signing sessions with a random "
+                    "per-process key (sessions end on restart and are not shared between instances)")
+    if settings.allow_dev_login:
+        log.warning("ALLOW_DEV_LOGIN is enabled: test-*/google-account-signin credentials and "
+                    "/auth/google/login?email= log in WITHOUT Google verification. Local development only.")
+
     def get_pipeline() -> Pipeline:
         if holder["p"] is None:
             holder["p"] = build_pipeline(settings, db=db)
@@ -239,33 +333,111 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         return jsonify(status="error", message="asset not found"), 404
 
     # -------------------------------------------------------------------------
+    # Identity: signed session token -> email -> role looked up in the user store on EVERY request.
+    # Nothing the client asserts (user_role cookie, X-User-Role, body user_role, admin_auth) is trusted.
+    # -------------------------------------------------------------------------
+    def _user_object(email: str, name: str, role: str) -> Dict[str, Any]:
+        return {"email": email, "name": name, "role": role, "permissions": permissions_for_role(role)}
+
+    def _resolve_user(email: Optional[str]) -> Optional[Dict[str, Any]]:
+        """admin if db.is_admin_user(email); else user if an active role=user record exists; else None."""
+        clean = (email or "").strip().lower()
+        if not clean:
+            return None
+        record = db.get_user(clean) if hasattr(db, "get_user") else None
+        record = record if isinstance(record, dict) else {}
+        if db.is_admin_user(clean):
+            role = "admin"
+        elif str(record.get("role") or "").strip().lower() == "user" and record.get("status") == "active":
+            role = "user"
+        else:
+            return None
+        name = str(record.get("name") or clean.split("@")[0]).strip()
+        return _user_object(clean, name, role)
+
+    def _session_subject(req) -> Optional[str]:
+        auth_hdr = req.headers.get("Authorization", "")
+        if auth_hdr[:7].lower() == "bearer ":
+            sub = verify_session_token(session_key, auth_hdr[7:].strip())
+            if sub:
+                return sub
+        return verify_session_token(session_key, req.cookies.get(SESSION_COOKIE))
+
+    def _current_identity() -> Optional[Dict[str, Any]]:
+        """The verified caller for this request, or None. Cached per request."""
+        if "gf_identity" in g:
+            return g.gf_identity
+        ident: Optional[Dict[str, Any]] = None
+        if verify_token(request.headers, settings.pipeline_token):
+            ident = _user_object(SERVICE_IDENTITY_EMAIL, "Pipeline Service", "admin")
+        else:
+            sub = _session_subject(request)
+            if sub:
+                ident = _resolve_user(sub)
+        g.gf_identity = ident
+        return ident
+
+    def _is_https(req) -> bool:
+        proto = (req.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower()
+        return bool(req.is_secure or proto == "https")
+
+    def _new_session_token(email: str) -> str:
+        return issue_session_token(session_key, email, ttl=SESSION_TTL_SECONDS)
+
+    def _set_session_cookies(resp: Response, token: str, role: str) -> Response:
+        secure = _is_https(request)
+        resp.set_cookie(SESSION_COOKIE, token, max_age=SESSION_TTL_SECONDS, path="/",
+                        httponly=True, samesite="Lax", secure=secure)
+        resp.set_cookie(ROLE_HINT_COOKIE, role, max_age=SESSION_TTL_SECONDS, path="/",
+                        httponly=False, samesite="Lax", secure=secure)
+        resp.delete_cookie(ADMIN_AUTH_COOKIE, path="/")
+        return resp
+
+    def _clear_auth_cookies(resp: Response) -> Response:
+        for name in (SESSION_COOKIE, ROLE_HINT_COOKIE, ADMIN_AUTH_COOKIE, BOOKLET_COOKIE):
+            resp.delete_cookie(name, path="/")
+        return resp
+
+    def _error(status_code: int, code: str, message: str):
+        return jsonify(status="error", code=code, message=message), status_code
+
+    def _identity_login(email: str, name: str = ""):
+        """Maps a VERIFIED email (Google or dev login) to a user object, auto-registering unknown
+        accounts as role=user. Returns (user, None) or (None, error_code)."""
+        clean = (email or "").strip().lower()
+        if not clean:
+            return None, "missing_email"
+        user = _resolve_user(clean)
+        if user:
+            return user, None
+        existing = db.get_user(clean) if hasattr(db, "get_user") else None
+        if isinstance(existing, dict) and existing:
+            return None, "account_disabled"      # known but inactive / unknown role: never re-activate here
+        if not hasattr(db, "update_user_role"):
+            return None, "not_registered"
+        db.update_user_role(clean, "user", name=(name or clean.split("@")[0]).strip())
+        user = _resolve_user(clean)
+        return (user, None) if user else (None, "not_registered")
+
+    # -------------------------------------------------------------------------
     # Booklet View (小组每月奉献记录 - 受账号密码保护)
     # -------------------------------------------------------------------------
     def is_booklet_auth(req) -> bool:
-        # Check admin_auth cookie
-        admin_cookie = req.cookies.get(ADMIN_AUTH_COOKIE)
-        if admin_cookie and (admin_cookie.startswith("session-") or admin_cookie in active_admin_tokens):
+        # 1. A verified session (any role) or the pipeline token
+        if _current_identity() is not None:
             return True
-
-        # Check Bearer token in Authorization header
-        auth_hdr = req.headers.get("Authorization", "")
-        if auth_hdr.startswith("Bearer "):
-            bearer = auth_hdr[7:].strip()
-            if bearer.startswith("session-") or bearer in active_admin_tokens:
-                return True
-
-        if booklet_enabled:  # fail closed: no booklet credential or cookie is valid when unconfigured
+        # 2. The shared, view-only booklet credential (cookie or basic auth). Fail closed when unconfigured.
+        auth = req.authorization
+        if booklet_enabled:
             cookie = req.cookies.get(BOOKLET_COOKIE)
             if cookie and _consteq(cookie, booklet_cookie_value):
                 return True
-            auth = req.authorization
             if auth and auth.username is not None and auth.password is not None:
-                user_ok = _consteq(auth.username, booklet_user) or db.is_admin_user(auth.username)
-                pass_ok = _consteq(auth.password, booklet_password)
-                if (user_ok and pass_ok) or db.verify_user(auth.username, auth.password):
+                if _consteq(auth.username.lower(), booklet_user.lower()) and _consteq(auth.password, booklet_password):
                     return True
-        if verify_token(req.headers, settings.pipeline_token):
-            return True
+        # 3. Basic auth with DB-verified credentials of an active user
+        if auth and auth.username and auth.password and db.verify_user(auth.username, auth.password):
+            return _resolve_user(auth.username) is not None
         return False
 
     @app.route("/booklet", methods=["GET", "POST"])
@@ -275,18 +447,20 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         if request.method == "POST":
             username = str(request.form.get("username", "")).strip()
             password = str(request.form.get("password", "")).strip()
-            pass_ok = booklet_enabled and _consteq(password, booklet_password)
-            user_ok = _consteq(username.lower(), booklet_user.lower()) or db.is_admin_user(username)
 
-            if (user_ok and pass_ok) or db.verify_user(username, password):
+            # DB-verified credentials -> a real session carrying the role from the user store
+            if username and password and db.verify_user(username, password):
+                user = _resolve_user(username)
+                if user:
+                    resp = redirect("/booklet")
+                    return _set_session_cookies(resp, _new_session_token(user["email"]), user["role"])
+
+            # The shared booklet user/password -> view-only cookie. Never a session, never admin.
+            if (booklet_enabled and _consteq(username.lower(), booklet_user.lower())
+                    and _consteq(password, booklet_password)):
                 resp = redirect("/booklet")
-                cookie_val = booklet_cookie_value or booklet_token(username or booklet_user, password or "admin")
-                resp.set_cookie(BOOKLET_COOKIE, cookie_val, max_age=BOOKLET_COOKIE_MAX_AGE,
-                                httponly=True, samesite="Lax")
-                admin_token = f"session-{hashlib.sha256(f'{username}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
-                active_admin_tokens.add(admin_token)
-                resp.set_cookie(ADMIN_AUTH_COOKIE, admin_token, max_age=BOOKLET_COOKIE_MAX_AGE,
-                                httponly=True, samesite="Lax")
+                resp.set_cookie(BOOKLET_COOKIE, booklet_cookie_value, max_age=BOOKLET_COOKIE_MAX_AGE,
+                                httponly=True, samesite="Lax", secure=_is_https(request))
                 return resp
 
             if not booklet_enabled:
@@ -296,13 +470,9 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
             error_html = '<div class="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-xs text-center font-medium">用户名或密码错误，请重试。</div>'
             return BOOKLET_LOGIN_HTML.replace("{error_banner}", error_html).replace("{username}", html_escape(username)), 401
 
-        # Redirect standard users away from /booklet on GET
-        if request.cookies.get("user_role") == "user":
-            return redirect("/app?tab=entry")
-
         # Check authentication on GET
         if not is_booklet_auth(request):
-            return BOOKLET_LOGIN_HTML.replace("{error_banner}", "").replace("{username}", "admin@group.finance.com")
+            return BOOKLET_LOGIN_HTML.replace("{error_banner}", "").replace("{username}", "")
 
         p = get_pipeline()
         preview_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "preview_site"))
@@ -339,18 +509,12 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
 
     @app.get("/booklet/logout")
     def booklet_logout():
-        resp = redirect("/booklet")
-        resp.delete_cookie(BOOKLET_COOKIE)
-        resp.delete_cookie(ADMIN_AUTH_COOKIE)
-        resp.delete_cookie("user_role")
-        return resp
+        return _clear_auth_cookies(redirect("/booklet"))
 
     @app.get("/booklet/<path:filename>")
     @app.get("/preview_site/<path:filename>")
     def booklet_static(filename):
         """Serves individual month files or assets for the booklet view."""
-        if request.cookies.get("user_role") == "user":
-            return redirect("/app?tab=entry")
         if not is_booklet_auth(request):
             return redirect("/booklet")
 
@@ -417,53 +581,28 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         return {"migrated": mig_res, "site": site_res}
 
     def _build_oauth_login_response(email: str, name: str = "", target_path: str = "/app?tab=entry") -> Response:
-        clean_email = email.strip().lower()
-        clean_name = (name or clean_email.split("@")[0]).strip()
-        if db.is_admin_user(clean_email):
-            role = "admin"
-            u_info = db.get_user(clean_email) if hasattr(db, "get_user") else None
-            if isinstance(u_info, dict) and u_info.get("name"):
-                clean_name = u_info["name"]
-            token = f"session-{hashlib.sha256(f'{clean_email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
-            active_admin_tokens.add(token)
-        else:
-            u_obj = db.get_user(clean_email) if hasattr(db, "get_user") else None
-            if isinstance(u_obj, dict) and u_obj.get("role") in ("admin", "user"):
-                role = u_obj["role"]
-                clean_name = u_obj.get("name") or clean_name
-            else:
-                role = "user"
-                if hasattr(db, "update_user_role"):
-                    db.update_user_role(clean_email, "user", name=clean_name)
-            if role == "admin":
-                token = f"session-{hashlib.sha256(f'{clean_email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
-                active_admin_tokens.add(token)
-            else:
-                token = f"user-session-{hashlib.sha256(f'{clean_email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
+        """Logs a VERIFIED email in: issues the session, writes localStorage for the SPA, redirects."""
+        user, err = _identity_login(email, name)
+        if not user:
+            return redirect(f"/app?oauth_error={err or 'login_failed'}")
+        token = _new_session_token(user["email"])
 
-        safe_target = target_path if (target_path and target_path.startswith("/") and not target_path.startswith("//")) else "/app?tab=entry"
-        if role == "user":
+        safe_target = _safe_redirect_target(target_path)
+        if user["role"] == "user" and "database-view" in safe_target:
             safe_target = "/app?tab=entry"
-        user_payload = json.dumps({"email": clean_email, "name": clean_name, "role": role}, ensure_ascii=False)
-        token_payload = json.dumps(token)
-        target_payload = json.dumps(safe_target)
         callback_html = f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>正在登录...</title></head>
 <body><script>
 try {{
-  localStorage.setItem("sessionToken", {token_payload});
-  localStorage.setItem("authToken", {token_payload});
-  localStorage.setItem("currentUser", JSON.stringify({user_payload}));
+  localStorage.setItem("sessionToken", {_js_literal(token)});
+  localStorage.setItem("authToken", {_js_literal(token)});
+  localStorage.setItem("currentUser", JSON.stringify({_js_literal(user)}));
 }} catch (e) {{}}
-window.location.replace({target_payload});
+window.location.replace({_js_literal(safe_target)});
 </script></body></html>"""
         resp = Response(callback_html, mimetype="text/html; charset=utf-8")
-        resp.set_cookie("user_role", role, max_age=BOOKLET_COOKIE_MAX_AGE, httponly=False, samesite="Lax")
-        if role == "admin":
-            resp.set_cookie(ADMIN_AUTH_COOKIE, token, max_age=BOOKLET_COOKIE_MAX_AGE, httponly=True, samesite="Lax")
-        else:
-            resp.delete_cookie(ADMIN_AUTH_COOKIE)
-        return resp
+        resp.headers["Cache-Control"] = "no-store"
+        return _set_session_cookies(resp, token, user["role"])
 
     @app.get("/auth/google/login")
     def google_oauth_login():
@@ -473,7 +612,8 @@ window.location.replace({target_payload});
         fallback_name = (request.args.get("name") or "").strip()
         state_target = (request.args.get("state") or "/app?tab=entry").strip()
         if not client_id:
-            if fallback_email:
+            # ?email= without Google verification is a local-development convenience only
+            if fallback_email and settings.allow_dev_login:
                 return _build_oauth_login_response(fallback_email, fallback_name, state_target)
             return redirect("/app?oauth_error=google_oauth_not_configured")
         from urllib.parse import urlencode
@@ -531,12 +671,12 @@ window.location.replace({target_payload});
         access_token = token_data.get("access_token")
         userinfo: Dict[str, Any] = {}
 
-        if id_token_str:
+        if id_token_str and client_id:
             try:
                 from google.oauth2 import id_token
                 from google.auth.transport import requests as google_requests
                 userinfo = id_token.verify_oauth2_token(
-                    id_token_str, google_requests.Request(), audience=client_id or None
+                    id_token_str, google_requests.Request(), audience=client_id
                 ) or {}
             except Exception as exc:
                 log.warning("Google OAuth callback id_token verification failed: %s", exc)
@@ -556,6 +696,8 @@ window.location.replace({target_payload});
         email = str(userinfo.get("email") or "").strip().lower()
         if not email:
             return redirect("/app?oauth_error=missing_email")
+        if userinfo.get("email_verified") in (False, "false"):
+            return redirect("/app?oauth_error=email_not_verified")
 
         name = str(userinfo.get("name") or email.split("@")[0]).strip()
         return _build_oauth_login_response(email, name, state_target)
@@ -572,7 +714,29 @@ window.location.replace({target_payload});
             data = request.get_json(force=True, silent=True) or request.form.to_dict() or {}
         if not data:
             return jsonify(status="error", message="请求体不能为空。"), 400
-        action = data.get("action", "add_record")
+        if not isinstance(data, dict):
+            return jsonify(status="error", message="请求体必须是 JSON 对象。"), 400
+        action = str(data.get("action") or "add_record").strip()
+
+        # ---- Central authorization gate (before any dispatch) ----
+        if request.method == "GET" and action in API_POST_ONLY_ACTIONS:
+            return _error(405, "method_not_allowed", METHOD_NOT_ALLOWED_MESSAGE)
+        required = API_ACTION_ACCESS.get(action, ACCESS_SIGNED_IN)
+        caller = _current_identity() if required != ACCESS_PUBLIC else None
+        if required != ACCESS_PUBLIC and caller is None:
+            return _error(401, "unauthenticated", UNAUTHENTICATED_MESSAGE)
+        if required == ACCESS_ADMIN and caller.get("role") != "admin":
+            return _error(403, "forbidden", ADMIN_ONLY_MESSAGES.get(action, ADMIN_ONLY_DEFAULT_MESSAGE))
+        if action not in API_ACTION_ACCESS:
+            return _error(400, "unknown_action", f"未知操作 (unknown action): {action[:64]}")
+
+        # Action: whoami
+        if action == "whoami":
+            return jsonify(status="success", user=caller)
+
+        # Action: logout
+        if action == "logout":
+            return _clear_auth_cookies(jsonify(status="success"))
 
         # Action: status
         if action == "status":
@@ -608,131 +772,77 @@ window.location.replace({target_payload});
                 return jsonify(status="error", message="Transaction not found."), 404
             return jsonify(status="success", transaction=tx)
 
-        # 1. Action: login
+        # 1. Action: login (password stored in the user store; there are no built-in credentials)
         if action == "login":
             username = str(data.get("username", "")).strip()
             password = str(data.get("password", "")).strip()
             if not username or not password:
                 return jsonify(status="error", message="Username and password are required."), 400
+            user = _resolve_user(username) if db.verify_user(username, password) else None
+            if not user:
+                return _error(401, "invalid_credentials", "Invalid credentials")
+            token = _new_session_token(user["email"])
+            resp = jsonify(status="success", user=user, role=user["role"], user_info=user, token=token)
+            return _set_session_cookies(resp, token, user["role"])
 
-            if db.verify_user(username, password):
-                u_obj = db.get_user(username) if hasattr(db, "get_user") else None
-                role = (
-                    u_obj.get("role", "admin")
-                    if isinstance(u_obj, dict)
-                    else ("admin" if db.is_admin_user(username) or username.lower() == "admin" else "user")
-                )
-                name = u_obj.get("name", username) if isinstance(u_obj, dict) else username
-                resp = jsonify(
-                    status="success",
-                    user=username,
-                    role=role,
-                    user_info={"email": username, "name": name, "role": role},
-                    token="auth-" + username,
-                )
-                resp.set_cookie("user_role", role, max_age=BOOKLET_COOKIE_MAX_AGE, httponly=False, samesite="Lax")
-                if role == "admin":
-                    admin_token = f"session-{hashlib.sha256(f'{username}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
-                    active_admin_tokens.add(admin_token)
-                    resp.set_cookie(ADMIN_AUTH_COOKIE, admin_token, max_age=BOOKLET_COOKIE_MAX_AGE, httponly=True, samesite="Lax")
-                else:
-                    resp.delete_cookie(ADMIN_AUTH_COOKIE)
-                return resp
-            return jsonify(status="error", message="Invalid credentials"), 401
-
-        # Action: google_login
+        # Action: google_login (Google ID token verified against the configured client id)
         if action == "google_login":
             credential = str(data.get("credential") or "").strip()
             if not credential:
                 return jsonify(status="error", message="Missing credential token"), 400
 
-            email = ""
-            g_name = ""
-            verified_real_token = False
-            if credential == "test-admin-token" or credential.startswith("test-"):
+            if _is_dev_credential(credential, data):
+                if not settings.allow_dev_login:
+                    return _error(401, "invalid_credentials",
+                                  "Dev login is disabled. Please sign in with Google.")
                 default_em = "user@group.finance.com" if credential == "test-user-token" else "admin@group.finance.com"
                 email = str(data.get("email") or default_em).strip().lower()
-            elif credential in ("google-account-signin", "google-oauth-fallback") or data.get("provider") == "google":
-                email = str(data.get("email") or "").strip().lower()
                 g_name = str(data.get("name") or "").strip()
-                verified_real_token = True
             else:
+                client_id = _effective_google_client_id()
+                if not client_id:
+                    return _error(503, "google_oauth_not_configured", "Google sign-in is not configured.")
                 try:
                     from google.oauth2 import id_token
                     from google.auth.transport import requests as google_requests
-                    client_id = _effective_google_client_id() or None
-                    idinfo = id_token.verify_oauth2_token(credential, google_requests.Request(), audience=client_id)
-                    email = str(idinfo.get("email", "")).strip().lower()
-                    g_name = str(idinfo.get("name") or "").strip()
-                    verified_real_token = True
+                    idinfo = id_token.verify_oauth2_token(credential, google_requests.Request(), audience=client_id) or {}
                 except Exception as exc:
                     log.warning("Google ID token verification failed: %s", exc)
-                    if credential == "test-admin-token":
-                        email = str(data.get("email") or "admin@group.finance.com").strip().lower()
-                    else:
-                        return jsonify(status="error", message=f"Invalid credential token: {exc}"), 401
+                    return _error(401, "invalid_credentials", f"Invalid credential token: {exc}")
+                if idinfo.get("email_verified") in (False, "false"):
+                    return _error(401, "invalid_credentials", "Google account email is not verified.")
+                email = str(idinfo.get("email", "")).strip().lower()
+                g_name = str(idinfo.get("name") or "").strip()
 
             if not email:
                 return jsonify(status="error", message="Unable to extract email from credential."), 400
 
-            if db.is_admin_user(email):
-                u_info = db.get_user(email) if hasattr(db, "get_user") else None
-                u_name = (u_info.get("name") if isinstance(u_info, dict) else None) or g_name or "Admin"
-                token = f"session-{hashlib.sha256(f'{email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
-                active_admin_tokens.add(token)
-
-                resp = jsonify(
-                    status="success",
-                    token=token,
-                    user={"email": email, "name": u_name, "role": "admin"}
-                )
-                resp.set_cookie(ADMIN_AUTH_COOKIE, token, max_age=BOOKLET_COOKIE_MAX_AGE, httponly=True, samesite="Lax")
-                resp.set_cookie("user_role", "admin", max_age=BOOKLET_COOKIE_MAX_AGE, httponly=False, samesite="Lax")
-                return resp
-
-            user_obj = db.get_user(email) if hasattr(db, "get_user") else None
-            if isinstance(user_obj, dict) and user_obj.get("role") == "user" and user_obj.get("status") == "active":
-                token = f"user-session-{hashlib.sha256(f'{email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
-                resp = jsonify(
-                    status="success",
-                    token=token,
-                    user={"email": email, "name": user_obj.get("name", email), "role": "user"}
-                )
-                resp.delete_cookie(ADMIN_AUTH_COOKIE)
-                resp.set_cookie("user_role", "user", max_age=BOOKLET_COOKIE_MAX_AGE, httponly=False, samesite="Lax")
-                return resp
-
-            if data.get("login_as") == "user" or verified_real_token:
-                u_name = str(data.get("name") or g_name or email.split("@")[0]).strip()
-                if hasattr(db, "update_user_role"):
-                    db.update_user_role(email, "user", name=u_name)
-                token = f"user-session-{hashlib.sha256(f'{email}:{settings.pipeline_token}:{datetime.now().timestamp()}'.encode()).hexdigest()[:32]}"
-                resp = jsonify(
-                    status="success",
-                    token=token,
-                    user={"email": email, "name": u_name, "role": "user"}
-                )
-                resp.delete_cookie(ADMIN_AUTH_COOKIE)
-                resp.set_cookie("user_role", "user", max_age=BOOKLET_COOKIE_MAX_AGE, httponly=False, samesite="Lax")
-                return resp
-
-            return jsonify(status="error", message=f"Forbidden: {email} is not an authorized administrator."), 403
+            user, err = _identity_login(email, g_name)
+            if not user:
+                return _error(403, "forbidden", f"Forbidden: {email} is not an authorized account ({err}).")
+            token = _new_session_token(user["email"])
+            resp = jsonify(status="success", token=token, user=user)
+            return _set_session_cookies(resp, token, user["role"])
 
         # Action: get_settings
         if action == "get_settings":
             eff_cid = _effective_google_client_id()
             now_dt = settings.now()
             app_settings = db.get_app_settings() if hasattr(db, "get_app_settings") else {}
-            users = db.list_users() if hasattr(db, "list_users") else []
-            return jsonify(
+            body: Dict[str, Any] = dict(
                 status="success",
-                settings=app_settings,
-                users=users,
                 google_client_id=eff_cid,
                 google_oauth_enabled=bool(eff_cid),
                 current_year=now_dt.year,
                 current_month=now_dt.month,
             )
+            viewer = _current_identity()
+            if viewer is not None and viewer.get("role") == "admin":
+                body["settings"] = app_settings
+                body["users"] = db.list_users() if hasattr(db, "list_users") else []
+            else:
+                body["settings"] = _strip_secrets(app_settings)   # no user list, no secrets for non-admins
+            return jsonify(**body)
 
         # Action: update_settings
         if action == "update_settings":
@@ -887,7 +997,7 @@ window.location.replace({target_payload});
                     "entries": entries_list,
                 })
 
-            return jsonify(status="success", year=year, settings=app_cfg, months=months_list)
+            return jsonify(status="success", year=year, settings=_strip_secrets(app_cfg), months=months_list)
 
         # Action: list_transactions
         if action == "list_transactions":
@@ -1152,6 +1262,9 @@ window.location.replace({target_payload});
             return jsonify(status="success", message="记录已成功删除", id=tx_id, deleted=True)
 
         # 4. Action: add_record (default when submitting transactions)
+        if action != "add_record":   # every table entry must have a handler above
+            log.error("api action %r is in API_ACTION_ACCESS but has no handler", action)
+            return _error(400, "unknown_action", f"未知操作 (unknown action): {action[:64]}")
         date_str = str(data.get("date") or settings.today().isoformat()).strip()
         item = str(data.get("item") or "").strip()
         try:
