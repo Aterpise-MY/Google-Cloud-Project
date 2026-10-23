@@ -674,8 +674,8 @@ function AppHeader({
           h("span", null, "🗄️ 数据库管理")
         ),
 
-        // 3. 📖 奉献记录全册 (Admin ONLY)
-        isAdmin && h("button", {
+        // 3. 📖 奉献记录全册 (User Read-Only / Admin Full)
+        h("button", {
           type: "button",
           onClick: () => onNavigateTab("booklet"),
           className: `px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 ${
@@ -1931,7 +1931,7 @@ function DatabaseViewTab({
           h("div", null,
             h("h3", { className: "text-base font-black text-slate-800" }, "👥 用户与管理员权限设定 (User / Admin Role Management)"),
             h("p", { className: "text-xs text-slate-500 mt-0.5" },
-              "设定同工账号角色：普通同工 (User) 仅可访问【📝 记账录入】；管理员 (Admin) 可访问全部三大模块"
+              "设定同工账号角色：普通同工 (User) 可访问【📝 记账录入】与查看【📖 奉献记录全册（只读，不可编辑/删除）】，不可访问【🗄️ 数据库管理】；管理员 (Admin) 拥有完整权限"
             )
           ),
           h("span", { className: "px-3 py-1 bg-indigo-50 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200" },
@@ -2022,7 +2022,7 @@ function DatabaseViewTab({
                           "完整权限：可访问【记账录入】、【数据库管理】、【奉献记录全册】，支持编辑/删除流水、配置分类及管理同工权限"
                         )
                       : h("span", { className: "text-slate-600 font-medium" },
-                          "基础权限：仅限访问【📝 记账录入】页面，自动拦截后台数据库及奉献册子访问"
+                          "基础权限：可访问【📝 记账录入】与查看【📖 奉献记录全册（只读，不可编辑/删除记录）】，禁止访问【🗄️ 数据库管理】"
                         )
                   ),
                   h("td", { className: "py-3 px-4 text-center whitespace-nowrap" },
@@ -2471,9 +2471,10 @@ function DatabaseViewTab({
 }
 
 // ============================================================================
-// Module 3: 📖 奉献记录全册 (Monthly Offering Booklet View - Admin Exclusive)
+// Module 3: 📖 奉献记录全册 (Monthly Offering Booklet View - User Read-Only / Admin Editable)
 // ============================================================================
 function BookletViewTab({
+  isAdmin,
   transactions,
   bookletSettings,
   onDeleteTransaction,
@@ -2501,6 +2502,7 @@ function BookletViewTab({
   const verifyName = bookletSettings?.verify_name || "Rivaldo";
 
   const handleInlineDelete = async (tx) => {
+    if (!isAdmin) return;
     const amtStr = tx.income > 0 ? `收入: RM ${tx.income}` : `支出: RM ${tx.expense}`;
     const confirmed = window.confirm(
       `确定要从奉献记录册中删除这条记录吗？\n\n• 日期: ${tx.shortDate || tx.date}\n• 事项: ${tx.item}\n• 金额: ${amtStr}\n\n删除后，本月及后续月份的结存将自动重新计算。`
@@ -2522,7 +2524,7 @@ function BookletViewTab({
             onClick: () => onNavigateTab("entry"),
             className: "px-3.5 py-2 rounded-xl text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition-all"
           }, "📝 记账录入"),
-          h("button", {
+          isAdmin && h("button", {
             type: "button",
             onClick: () => onNavigateTab("database-view"),
             className: "px-3.5 py-2 rounded-xl text-xs font-bold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 transition-all"
@@ -2627,7 +2629,7 @@ function BookletViewTab({
               h("col", { style: { width: "88px" } }),
               h("col", { style: { width: "68px" } }),
               h("col", { style: { width: "68px" } }),
-              h("col", { className: "col-act" })
+              isAdmin && h("col", { className: "col-act" })
             ),
             h("thead", null,
               h("tr", null,
@@ -2638,7 +2640,7 @@ function BookletViewTab({
                 h("th", null, "结存"),
                 h("th", null, "签名"),
                 h("th", null, "签名"),
-                h("th", { className: "col-act" })
+                isAdmin && h("th", { className: "col-act" })
               )
             ),
             h("tbody", null,
@@ -2651,7 +2653,7 @@ function BookletViewTab({
                 h("td", { className: "b", style: { fontWeight: 600 } }, Number.isInteger(mData.openingBf) ? String(mData.openingBf) : mData.openingBf.toFixed(2)),
                 h("td", null, ""),
                 h("td", null, ""),
-                h("td", { className: "col-act" })
+                isAdmin && h("td", { className: "col-act" })
               ),
 
               // Subsequent Chronological Transaction Rows
@@ -2668,7 +2670,7 @@ function BookletViewTab({
                   h("td", { className: "b" }, balStr),
                   h("td", null, ""),
                   h("td", null, ""),
-                  h("td", { className: "col-act no-print print:hidden" },
+                  isAdmin && h("td", { className: "col-act no-print print:hidden" },
                     h("button", {
                       type: "button",
                       className: "btn-del",
@@ -2689,7 +2691,7 @@ function BookletViewTab({
                   h("td", { className: "x" }, ""),
                   h("td", { className: "x" }, ""),
                   h("td", { className: "x" }, ""),
-                  h("td", { className: "col-act" })
+                  isAdmin && h("td", { className: "col-act" })
                 )
               )
             )
@@ -2846,7 +2848,7 @@ function GroupFinanceApp() {
     if (!currentUser) return;
     const checkAndEnforceRbac = () => {
       const targetTab = resolveTabFromUrl();
-      if (!isAdmin && (targetTab === "database-view" || targetTab === "booklet" || activeTab === "database-view" || activeTab === "booklet")) {
+      if (!isAdmin && (targetTab === "database-view" || activeTab === "database-view")) {
         window.history.replaceState(null, "", "/app?tab=entry");
         setActiveTab("entry");
         showToast("⚠️ 已为您自动跳转至【记账录入】页面", "warning");
@@ -2862,7 +2864,7 @@ function GroupFinanceApp() {
 
   // Navigate between tabs with RBAC guard
   const handleNavigateTab = useCallback((targetTab) => {
-    if (!isAdmin && (targetTab === "database-view" || targetTab === "booklet")) {
+    if (!isAdmin && targetTab === "database-view") {
       window.history.replaceState(null, "", "/app?tab=entry");
       setActiveTab("entry");
       showToast("⚠️ 已为您自动跳转至【记账录入】页面", "warning");
@@ -2980,6 +2982,7 @@ function GroupFinanceApp() {
   }, [fetchTransactionsFromApi, showToast]);
 
   const handleUpdateTransaction = useCallback(async (updatedTx) => {
+    if (!isAdmin) return;
     try {
       await apiPost("update_record", {
         id: updatedTx.id,
@@ -2999,9 +3002,10 @@ function GroupFinanceApp() {
     });
     await fetchTransactionsFromApi(false);
     showToast("✅ 记录已成功修改！收支总账与奉献册子已实时同步");
-  }, [fetchTransactionsFromApi, showToast]);
+  }, [isAdmin, fetchTransactionsFromApi, showToast]);
 
   const handleDeleteTransaction = useCallback(async (targetTx) => {
+    if (!isAdmin) return;
     try {
       await apiPost("delete_record", {
         id: targetTx.id,
@@ -3022,7 +3026,7 @@ function GroupFinanceApp() {
     });
     await fetchTransactionsFromApi(false);
     showToast("✅ 记录已成功删除！结余已重新计算并实时同步");
-  }, [fetchTransactionsFromApi, showToast]);
+  }, [isAdmin, fetchTransactionsFromApi, showToast]);
 
   const handleUpdateCategoryPresets = useCallback(async (nextIncome, nextExpense) => {
     setIncomeItems(nextIncome);
@@ -3105,11 +3109,11 @@ function GroupFinanceApp() {
     setCurrentUser(normalizedUser);
     setOauthError(null);
 
-    if (role === "user") {
+    const targetTab = resolveTabFromUrl();
+    if (role === "user" && targetTab === "database-view") {
       window.history.replaceState(null, "", "/app?tab=entry");
       setActiveTab("entry");
     } else {
-      const targetTab = resolveTabFromUrl();
       setActiveTab(targetTab);
     }
     showToast(`✅ 登录成功 (${normalizedUser.email})`);
@@ -3188,8 +3192,9 @@ function GroupFinanceApp() {
         showToast
       }),
 
-      // Module 3: 📖 奉献记录全册 (Admin Exclusive)
-      activeTab === "booklet" && isAdmin && h(BookletViewTab, {
+      // Module 3: 📖 奉献记录全册 (User Read-Only / Admin Editable)
+      activeTab === "booklet" && h(BookletViewTab, {
+        isAdmin,
         transactions,
         bookletSettings,
         onDeleteTransaction: handleDeleteTransaction,
