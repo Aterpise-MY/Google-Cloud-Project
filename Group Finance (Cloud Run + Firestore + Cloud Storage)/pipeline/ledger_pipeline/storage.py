@@ -16,8 +16,9 @@ class LocalStorage:
         self.root = root
 
     def _p(self, path: str) -> str:
-        full = os.path.normpath(os.path.join(self.root, path))
-        if not full.startswith(os.path.normpath(self.root)):
+        root_real = os.path.realpath(self.root)
+        full = os.path.realpath(os.path.join(root_real, path))
+        if full != root_real and not full.startswith(root_real + os.sep):
             raise ValueError("path escapes storage root")
         return full
 

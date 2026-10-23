@@ -33,28 +33,28 @@ ADMIN_ACCOUNTS: List[Dict[str, Any]] = [
         "name": "Admin",
         "role": "admin",
         "status": "active",
-        "password": "Abc1234#",
+        "password": os.environ.get("ADMIN_SEED_PASSWORD", ""),
     },
     {
         "email": "admin@ebteq.desk",
         "name": "Admin (Ebteq Desk)",
         "role": "admin",
         "status": "active",
-        "password": "Abc1234#",
+        "password": os.environ.get("ADMIN_SEED_PASSWORD", ""),
     },
     {
         "email": "admin@groupfinance.com",
         "name": "Admin",
         "role": "admin",
         "status": "active",
-        "password": "Abc1234#",
+        "password": os.environ.get("ADMIN_SEED_PASSWORD", ""),
     },
     {
         "email": "brendon.ang20011007@gmail.com",
         "name": "Brendon Ang",
         "role": "admin",
         "status": "active",
-        "password": "Abc1234#",
+        "password": os.environ.get("ADMIN_SEED_PASSWORD", ""),
     },
 ]
 
@@ -65,13 +65,14 @@ def seed_admin_users(project_id: str | None = None, db: FirestoreLedgerDB | None
              project, os.environ.get("FIRESTORE_EMULATOR_HOST", "none"))
 
     database = db or FirestoreLedgerDB(project_id=project)
+    database.seed_default_users_and_settings()
     seeded: List[Dict[str, Any]] = []
 
     for acc in ADMIN_ACCOUNTS:
         email = acc["email"]
         name = acc["name"]
         role = acc["role"]
-        pwd = acc["password"]
+        pwd = acc.get("password") or os.environ.get("ADMIN_SEED_PASSWORD", "")
         user_data = database.add_admin_user(email=email, name=name, role=role, password=pwd)
         seeded.append(user_data)
         log.info("Seeded admin user: %s (role=%s, status=%s)", email, role, user_data.get("status"))

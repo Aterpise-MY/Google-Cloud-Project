@@ -11,11 +11,12 @@ The main session acts as the **Orchestrator**. It never writes application code 
 |---|---|---|---|
 | **Orchestrator** | Main session | Plans work, delegates tasks, reviews and approves deliverables, reports to user | None (writes no code) |
 | **Sub-Orchestrator** | `orchestrator` | Delegatable coordinator for full features: plans split, spawns engineers, runs approval loop | None (writes no code) |
-| **HR Manager** | `hr-manager` | Manages agent definitions (`.agent/agents/`) and updates roster | `.agent/agents/`, roster docs |
+| **HR Manager** | `hr-manager` | Manages agent definitions (`.agent/agents/`), skills (`.agent/skills/`), and updates roster | `.agent/agents/`, `.agent/skills/`, roster docs |
 | **Backend Engineer** | `backend-engineer` | Server-side logic, API endpoints, ledger calculation, background jobs, Apps Script, tests | `pipeline/ledger_pipeline/`, `pipeline/apps_script/`, `pipeline/scripts/`, `pipeline/tests/` |
 | **Frontend Engineer** | `frontend-engineer` | UI components, styling, preview site, React 19 / Tailwind code | `pipeline/frontend/`, `pipeline/preview_site/` |
 | **DevOps Engineer** | `devops-engineer` | GCP infrastructure, Terraform IaC, Cloud Run, Cloud CDN, GCS, Secret Manager, Docker, deploy scripts | `pipeline/deploy/`, `terraform/`, `pipeline/Dockerfile` |
 | **QA Engineer** | `qa-engineer` | End-to-end verification, RBAC testing, UI/UX acceptance audits, copywriting audits, and automated test suite validation | None (read-only verification) |
+| **Security Engineer** | `security-engineer` | Defensive security audits, vulnerability hunting with isolated hunter subagents, cryptographic/auth boundary verification, security reporting | None in repo (external audit output directory) |
 
 ---
 

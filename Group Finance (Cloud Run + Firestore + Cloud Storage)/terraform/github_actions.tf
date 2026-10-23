@@ -20,7 +20,7 @@ resource "google_iam_workload_identity_pool_provider" "github_oidc" {
   workload_identity_pool_id          = google_iam_workload_identity_pool.github.workload_identity_pool_id
   workload_identity_pool_provider_id = "github-oidc"
   display_name                       = "GitHub OIDC"
-  description                        = "${var.github_repository} (id ${var.github_repository_id}) on refs/heads/${var.github_deploy_branch} and pull requests"
+  description                        = "${var.github_repository} (id ${var.github_repository_id}) on refs/heads/${var.github_deploy_branch}"
 
   attribute_mapping = {
     "google.subject"          = "assertion.sub"
@@ -29,9 +29,8 @@ resource "google_iam_workload_identity_pool_provider" "github_oidc" {
     "attribute.ref"           = "assertion.ref"
   }
 
-  # Evaluated at token exchange. Tokens from any other repository are rejected.
-  # Allows workflows on the deploy branch and pull requests within the repository.
-  attribute_condition = "assertion.repository_id == '${var.github_repository_id}' && (assertion.ref == 'refs/heads/${var.github_deploy_branch}' || assertion.ref.startsWith('refs/pull/'))"
+  # Evaluated at token exchange. Tokens from any other repository or non-deploy branch (including pull requests) are rejected.
+  attribute_condition = "assertion.repository_id == '${var.github_repository_id}' && assertion.ref == 'refs/heads/${var.github_deploy_branch}'"
 
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"

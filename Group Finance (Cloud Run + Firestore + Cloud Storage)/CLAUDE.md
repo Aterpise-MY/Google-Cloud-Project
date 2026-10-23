@@ -14,12 +14,13 @@ This file defines how the agent team works on this codebase. The session's main 
 |---|---|---|---|
 | Orchestrator | main session (you) | Plans work, delegates tasks, reviews and approves every deliverable, reports to the user | none |
 | Sub-Orchestrator | `orchestrator` | Delegatable coordinator for a whole feature: plans the ownership split, spawns engineers, runs the approval loop, reports back to the main session. Writes no code. | none |
-| HR Manager | `hr-manager` | Hires (creates) and fires (removes) agents; maintains the roster | `.agent/agents/`, this roster section |
+| HR Manager | `hr-manager` | Hires (creates) and fires (removes) agents; maintains the roster and agent skills | `.agent/agents/`, `.agent/skills/`, roster docs |
 | Backend Engineer | `backend-engineer` | Server-side logic, API endpoints, ledger calculation, background jobs, Apps Script integrations, and tests | `pipeline/ledger_pipeline/`, `pipeline/apps_script/`, `pipeline/scripts/`, `pipeline/tests/` |
 | Frontend Engineer | `frontend-engineer` | UI components, styling, preview site, React 19 / Tailwind code | `pipeline/frontend/`, `pipeline/preview_site/` |
 | DevOps Engineer | `devops-engineer` | GCP infrastructure, Terraform IaC, Cloud Run, Cloud CDN, GCS, Secret Manager, Docker, and deployment scripts | `pipeline/deploy/`, `terraform/`, `pipeline/Dockerfile`, `pipeline/.dockerignore`, `pipeline/.gcloudignore`, `.github/workflows/` at the repository root (one level above `Group Finance/`) |
+| Security Engineer | `security-engineer` | Defensive security audits, vulnerability hunting with isolated hunter subagents, cryptographic/auth boundary verification, security reporting | none in repo (external audit output directory) |
 
-Agent definitions live in `.agent/agents/`. The roster table above must be kept in sync with those directories — updating it is the HR Manager's job.
+Agent definitions live in `.agent/agents/` and skills live in `.agent/skills/`. The roster table above must be kept in sync with those directories — updating it is the HR Manager's job.
 
 <!-- orchestrator-legion:start ownership -->
 **Directory ownership is exclusive.** No directory has two owners. If a task appears to need two agents in the same directory, the task is cut wrong: re-split it by ownership rather than letting both agents write there.
@@ -125,7 +126,7 @@ The HR Manager is the only agent allowed to change the team.
 
 - **Hire**: when the Orchestrator identifies recurring work no current agent owns, it asks the HR Manager to hire. Hiring = writing a new `.agent/agents/<role>.md` with a clear scope, tools, a default model, and quality bar, then updating the roster table in this file.
 - **Fire**: when an agent's scope is obsolete or it repeatedly fails the approval loop (3+ rejected rounds on multiple tasks), the Orchestrator reports it to HR. Firing = deleting the agent file and updating the roster. HR confirms with the user before firing.
-- HR never implements features and never edits code outside `.agent/agents/` and this file's roster section.
+- HR never implements features and never edits code outside `.agent/agents/`, `.agent/skills/`, and this file's roster section.
 <!-- orchestrator-legion:end hr-rules -->
 
 ## Engineering Conventions (all engineers)

@@ -296,12 +296,22 @@ DELETE_SCRIPT = """<script>
 (function() {
   try {
     var u = JSON.parse(localStorage.getItem('currentUser') || 'null');
-    if (u && u.role && u.role !== 'admin') {
-      window.location.replace('/app?tab=entry');
+    var isUserCookie = document.cookie.indexOf('user_role=user') !== -1;
+    if ((u && u.role && u.role !== 'admin') || isUserCookie) {
+      var style = document.createElement('style');
+      style.textContent = '.col-act, .btn-del, a[href*="database-view"] { display: none !important; }';
+      document.head.appendChild(style);
     }
   } catch (e) {}
 })();
 async function deleteEntry(year, month, dateStr, item, income, expense, btn) {
+  try {
+    var u = JSON.parse(localStorage.getItem('currentUser') || 'null');
+    if ((u && u.role && u.role !== 'admin') || document.cookie.indexOf('user_role=user') !== -1) {
+      alert('权限不足：仅管理员 (Admin) 可删除记录。');
+      return;
+    }
+  } catch (e) {}
   var amtStr = Number(income) > 0 ? ('收入: ' + income) : (Number(expense) > 0 ? ('支出: ' + expense) : '');
   var msg = '确定要删除这条记录吗？\\n\\n' +
             '• 日期: ' + dateStr + '\\n' +
@@ -360,7 +370,7 @@ def render_month_card(month: Month, *, closed: bool = False, closing_date: Optio
             classes = ENTRY_CELLS
             if editable:
                 e = month.entries[n - 1]
-                escaped_item = escape(e.item.replace("'", "\\'"))
+                escaped_item = escape(e.item.replace("\\", "\\\\").replace("'", "\\'"))
                 act_td = (f'<td class="col-act"><button type="button" class="btn-del" '
                           f'onclick="deleteEntry(\'{month.year}\', \'{month.month}\', '
                           f'\'{_short_date(e.date)}\', \'{escaped_item}\', \'{e.income}\', '

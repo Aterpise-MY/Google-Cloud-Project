@@ -44,7 +44,12 @@ class Pipeline:
                  private: Optional[Storage] = None):
         self.s, self.source, self.storage, self.drive = settings, source, storage, drive
         # archive PDFs + closing state never go to the (public, CDN-fronted) site bucket
-        self.private = private if private is not None else storage
+        if private is None:
+            from .storage import GcsStorage
+            if isinstance(storage, GcsStorage) or getattr(settings, "bucket", ""):
+                raise ValueError("private archive storage must be explicitly configured in bucket mode")
+            private = storage
+        self.private = private
         self._pdf, self._invalidate = pdf, invalidate
         self._now = now or settings.now
 
@@ -54,6 +59,20 @@ class Pipeline:
 
     def _closed(self, ym: YM, cur: YM) -> bool:
         return ym < cur or self.private.exists(f"state/closed-{ym_key(ym)}.json")
+
+    def is_closed_period(self, ym: YM) -> bool:
+        """Returns True if the accounting period (year, month) has been closed and archived."""
+        fn = f"state/closed-{ym_key(ym)}.json"
+        if hasattr(self, "private") and self.private:
+            try:
+                if self.private.exists(fn):
+                    return True
+            except Exception:
+                pass
+        db = getattr(self.source, "db", None)
+        if db and hasattr(db, "is_month_closed") and db.is_month_closed(ym[0], ym[1]):
+            return True
+        return False
 
     def _build(self, upto: YM) -> Dict[YM, Month]:
         try:
@@ -181,5 +200,11 @@ class Pipeline:
         self.private.put(f"state/closed-{ym_key(ym)}.json",
                          json.dumps({**result, "closed_at": now.isoformat()}, ensure_ascii=False).encode(),
                          JSON_T, "no-store")
+        db = getattr(self.source, "db", None)
+        if db is not None and hasattr(db, "record_month_closing"):
+            try:
+                db.record_month_closing(ym_key(ym), {**result, "closed_at": now.isoformat()})
+            except Exception as exc:
+                log.warning("Could not record month closing in db: %s", exc)
         result["site"] = self.publish_site()
         return result
