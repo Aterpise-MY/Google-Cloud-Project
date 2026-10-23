@@ -506,7 +506,21 @@ async function apiPost(action, payload = {}) {
     body: JSON.stringify(body)
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && !AUTH_EXEMPT_ACTIONS.has(action) && typeof onSessionExpired === "function") {
+    onSessionExpired();
+  }
   return { ok: res.ok, status: res.status, data };
+}
+
+// Server answered 401 for a signed-in action: the app registers a handler that signs the user out.
+const AUTH_EXEMPT_ACTIONS = new Set(["login", "google_login", "logout", "status", "get_settings"]);
+let onSessionExpired = null;
+
+// Server refusals (401/403/400/5xx) must not be treated as success. A thrown fetch error (network) is not a refusal.
+function refusalMessage(res) {
+  if (!res || res.ok) return null;
+  if (res.status === 401) return "登录已过期，请重新登录";
+  return (res.data && res.data.message) || "操作未能完成，请稍后重试";
 }
 
 // --- Normalize Date & Month Helper ---
@@ -621,7 +635,7 @@ function ToastBanner() {
 // ============================================================================
 function AppHeader({
   currentUser,
-  isAdmin,
+  canViewDatabase,
   activeTab,
   onNavigateTab,
   onLogout,
@@ -662,7 +676,7 @@ function AppHeader({
         ),
 
         // 2. 🗄️ 数据库管理 (Admin ONLY)
-        isAdmin && h("button", {
+        canViewDatabase && h("button", {
           type: "button",
           onClick: () => onNavigateTab("database-view"),
           className: `px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 ${
@@ -674,8 +688,8 @@ function AppHeader({
           h("span", null, "🗄️ 数据库管理")
         ),
 
-        // 3. 📖 奉献记录全册 (Admin ONLY)
-        isAdmin && h("button", {
+        // 3. 📖 奉献记录全册 (User Read-Only / Admin Full)
+        h("button", {
           type: "button",
           onClick: () => onNavigateTab("booklet"),
           className: `px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 ${
@@ -745,27 +759,29 @@ function GoogleLogoSvg({ size = 18 }) {
 // ============================================================================
 // Full-Page Login Screen (Silently verifies account access in background)
 // ============================================================================
+const OAUTH_ERROR_MESSAGES = {
+  google_oauth_not_configured: "Google OAuth 尚未配置 GOOGLE_CLIENT_ID，请联系管理员或在后台配置 OAuth Client ID。",
+  email_not_verified: "该 Google 账号的邮箱尚未验证，请先在 Google 完成邮箱验证后再登录。",
+  account_disabled: "该账号已被停用，请联系管理员。",
+  not_registered: "该邮箱尚未被授权使用本系统，请联系管理员开通账号。"
+};
+function describeOauthError(code) {
+  return OAUTH_ERROR_MESSAGES[code] || code;
+}
+
 function LoginScreen({ onLoginSuccess, userAccounts, googleClientId, initialError }) {
-  const [emailInput, setEmailInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(() => {
     if (!initialError) return null;
-    if (initialError === "google_oauth_not_configured") {
-      return "Google OAuth 尚未配置 GOOGLE_CLIENT_ID，请联系管理员或在后台配置 OAuth Client ID。";
-    }
-    return initialError;
+    return describeOauthError(initialError);
   });
   const googleBtnContainerRef = useRef(null);
 
   useEffect(() => {
-    if (initialError === "google_oauth_not_configured") {
-      setError("Google OAuth 尚未配置 GOOGLE_CLIENT_ID，请联系管理员或在后台配置 OAuth Client ID。");
-    } else if (initialError) {
-      setError(initialError);
+    if (initialError) {
+      setError(describeOauthError(initialError));
     }
   }, [initialError]);
-
-  const accountsList = userAccounts && userAccounts.length > 0 ? userAccounts : DEFAULT_USER_ACCOUNTS;
 
   // Redirect directly to Backend Google OAuth 2.0 Authorization Code Flow (accounts.google.com)
   const handleGoogleOAuthLogin = () => {
@@ -773,47 +789,6 @@ function LoginScreen({ onLoginSuccess, userAccounts, googleClientId, initialErro
     setError(null);
     const targetState = window.location.pathname + window.location.search;
     window.location.href = `/auth/google/login?state=${encodeURIComponent(targetState)}`;
-  };
-
-  const performLoginWithAccount = async (acc) => {
-    setLoading(true);
-    setError(null);
-    try {
-      if (acc.role === "admin") {
-        const { ok, data } = await apiPost("google_login", {
-          credential: "test-admin-token",
-          email: acc.email
-        });
-        const token = (ok && data.token) ? data.token : "session-admin-token";
-        onLoginSuccess(token, { email: acc.email, name: acc.name, role: "admin" });
-      } else {
-        onLoginSuccess("session-user-token", { email: acc.email, name: acc.name, role: "user" });
-      }
-    } catch {
-      onLoginSuccess(
-        acc.role === "admin" ? "session-admin-token" : "session-user-token",
-        { email: acc.email, name: acc.name, role: acc.role }
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleEmailFormSubmit = async (e) => {
-    e.preventDefault();
-    const trimmed = emailInput.trim().toLowerCase();
-    if (!trimmed) {
-      setError("请输入您的邮箱账号");
-      return;
-    }
-    const matched = accountsList.find((u) => u.email.toLowerCase() === trimmed);
-    if (matched) {
-      await performLoginWithAccount(matched);
-    } else {
-      const inferredRole = (trimmed.includes("admin") || trimmed === "brendon.ang20011007@gmail.com") ? "admin" : "user";
-      const inferredName = trimmed.split("@")[0];
-      await performLoginWithAccount({ email: trimmed, name: inferredName, role: inferredRole });
-    }
   };
 
   return h("div", {
@@ -941,6 +916,12 @@ function RecordEntryTab({
         expense: newEntry.expense,
         user: newEntry.user
       });
+      const refusal = refusalMessage(res);
+      if (refusal) {
+        setStatusMsg({ type: "error", text: `⚠️ ${refusal}` });
+        setLoading(false);
+        return;
+      }
       if (res && res.ok && res.data) {
         if (res.data.id) {
           newEntry.id = res.data.id;
@@ -949,7 +930,7 @@ function RecordEntryTab({
         }
       }
     } catch {
-      // Proceed with local state synchronization even if offline
+      // Proceed with local state synchronization even if offline (network exception only)
     } finally {
       setLoading(false);
     }
@@ -1931,7 +1912,7 @@ function DatabaseViewTab({
           h("div", null,
             h("h3", { className: "text-base font-black text-slate-800" }, "👥 用户与管理员权限设定 (User / Admin Role Management)"),
             h("p", { className: "text-xs text-slate-500 mt-0.5" },
-              "设定同工账号角色：普通同工 (User) 仅可访问【📝 记账录入】；管理员 (Admin) 可访问全部三大模块"
+              "设定同工账号角色：普通同工 (User) 可访问【📝 记账录入】与查看【📖 奉献记录全册（只读，不可编辑/删除）】，不可访问【🗄️ 数据库管理】；管理员 (Admin) 拥有完整权限"
             )
           ),
           h("span", { className: "px-3 py-1 bg-indigo-50 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200" },
@@ -2022,7 +2003,7 @@ function DatabaseViewTab({
                           "完整权限：可访问【记账录入】、【数据库管理】、【奉献记录全册】，支持编辑/删除流水、配置分类及管理同工权限"
                         )
                       : h("span", { className: "text-slate-600 font-medium" },
-                          "基础权限：仅限访问【📝 记账录入】页面，自动拦截后台数据库及奉献册子访问"
+                          "基础权限：可访问【📝 记账录入】与查看【📖 奉献记录全册（只读，不可编辑/删除记录）】，禁止访问【🗄️ 数据库管理】"
                         )
                   ),
                   h("td", { className: "py-3 px-4 text-center whitespace-nowrap" },
@@ -2471,9 +2452,11 @@ function DatabaseViewTab({
 }
 
 // ============================================================================
-// Module 3: 📖 奉献记录全册 (Monthly Offering Booklet View - Admin Exclusive)
+// Module 3: 📖 奉献记录全册 (Monthly Offering Booklet View - User Read-Only / Admin Editable)
 // ============================================================================
 function BookletViewTab({
+  canViewDatabase,
+  canDelete,
   transactions,
   bookletSettings,
   onDeleteTransaction,
@@ -2501,6 +2484,7 @@ function BookletViewTab({
   const verifyName = bookletSettings?.verify_name || "Rivaldo";
 
   const handleInlineDelete = async (tx) => {
+    if (!canDelete) return;
     const amtStr = tx.income > 0 ? `收入: RM ${tx.income}` : `支出: RM ${tx.expense}`;
     const confirmed = window.confirm(
       `确定要从奉献记录册中删除这条记录吗？\n\n• 日期: ${tx.shortDate || tx.date}\n• 事项: ${tx.item}\n• 金额: ${amtStr}\n\n删除后，本月及后续月份的结存将自动重新计算。`
@@ -2522,7 +2506,7 @@ function BookletViewTab({
             onClick: () => onNavigateTab("entry"),
             className: "px-3.5 py-2 rounded-xl text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition-all"
           }, "📝 记账录入"),
-          h("button", {
+          canViewDatabase && h("button", {
             type: "button",
             onClick: () => onNavigateTab("database-view"),
             className: "px-3.5 py-2 rounded-xl text-xs font-bold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 transition-all"
@@ -2627,7 +2611,7 @@ function BookletViewTab({
               h("col", { style: { width: "88px" } }),
               h("col", { style: { width: "68px" } }),
               h("col", { style: { width: "68px" } }),
-              h("col", { className: "col-act" })
+              canDelete && h("col", { className: "col-act" })
             ),
             h("thead", null,
               h("tr", null,
@@ -2638,7 +2622,7 @@ function BookletViewTab({
                 h("th", null, "结存"),
                 h("th", null, "签名"),
                 h("th", null, "签名"),
-                h("th", { className: "col-act" })
+                canDelete && h("th", { className: "col-act" })
               )
             ),
             h("tbody", null,
@@ -2651,7 +2635,7 @@ function BookletViewTab({
                 h("td", { className: "b", style: { fontWeight: 600 } }, Number.isInteger(mData.openingBf) ? String(mData.openingBf) : mData.openingBf.toFixed(2)),
                 h("td", null, ""),
                 h("td", null, ""),
-                h("td", { className: "col-act" })
+                canDelete && h("td", { className: "col-act" })
               ),
 
               // Subsequent Chronological Transaction Rows
@@ -2668,7 +2652,7 @@ function BookletViewTab({
                   h("td", { className: "b" }, balStr),
                   h("td", null, ""),
                   h("td", null, ""),
-                  h("td", { className: "col-act no-print print:hidden" },
+                  canDelete && h("td", { className: "col-act no-print print:hidden" },
                     h("button", {
                       type: "button",
                       className: "btn-del",
@@ -2689,7 +2673,7 @@ function BookletViewTab({
                   h("td", { className: "x" }, ""),
                   h("td", { className: "x" }, ""),
                   h("td", { className: "x" }, ""),
-                  h("td", { className: "col-act" })
+                  canDelete && h("td", { className: "col-act" })
                 )
               )
             )
@@ -2714,48 +2698,33 @@ function BookletViewTab({
 // ============================================================================
 // Main Application Container with RBAC & Unified Routing
 // ============================================================================
+function normalizeServerUser(u) {
+  const role = u.role === "admin" ? "admin" : "user";
+  const out = {
+    email: u.email,
+    name: u.name || String(u.email).split("@")[0],
+    role
+  };
+  if (u.permissions && typeof u.permissions === "object") out.permissions = u.permissions;
+  return out;
+}
+
 function GroupFinanceApp() {
   // 1. User Accounts & Role Configuration State
   const [userAccounts, setUserAccounts] = useState(() => DEFAULT_USER_ACCOUNTS);
 
   // 2. Current Logged-in User State (Null until logged in, or restored from active session)
-  const [currentUser, setCurrentUser] = useState(() => {
+  // The server is the source of truth for identity. localStorage only tells us whether to show a loading
+  // state while `whoami` answers; the cached role is never used to render admin-only UI.
+  const [currentUser, setCurrentUser] = useState(null);
+  const [sessionChecking, setSessionChecking] = useState(() => {
     try {
-      const params = new URLSearchParams(window.location.search);
-      const roleParam = params.get("role");
-      if (roleParam === "user") {
-        const u = { email: "ejenrivaldo5011@gmail.com", name: "Rivaldo", role: "user" };
-        localStorage.setItem("sessionToken", "session-user-token");
-        localStorage.setItem("currentUser", JSON.stringify(u));
-        return u;
-      }
-      if (roleParam === "admin") {
-        const a = { email: "hengga1007@gmail.com", name: "Brendon", role: "admin" };
-        localStorage.setItem("sessionToken", "session-admin-token");
-        localStorage.setItem("currentUser", JSON.stringify(a));
-        return a;
-      }
-      const token = localStorage.getItem("sessionToken") || localStorage.getItem("authToken");
-      const savedUser = localStorage.getItem("currentUser");
-      if (token && savedUser) {
-        if (!localStorage.getItem("sessionToken")) {
-          localStorage.setItem("sessionToken", token);
-        }
-        const parsed = JSON.parse(savedUser);
-        if (parsed && parsed.email) {
-          const inferredRole = parsed.role || (parsed.email.toLowerCase() === "hengga1007@gmail.com" || parsed.email.includes("admin") ? "admin" : "user");
-          return {
-            email: parsed.email,
-            name: parsed.name || parsed.email.split("@")[0],
-            role: inferredRole
-          };
-        }
-      }
+      return !!(localStorage.getItem("sessionToken") || localStorage.getItem("authToken"));
     } catch {
-      // Ignore parse error
+      return false;
     }
-    return null;
   });
+  const [notice, setNotice] = useState(null);
 
   // 3. Preset Income & Expense Items State
   const [incomeItems, setIncomeItems] = useState(() => {
@@ -2813,17 +2782,82 @@ function GroupFinanceApp() {
   });
 
   // 7. Toast Callback (No-op per user preference to disable floating banner)
-  const showToast = useCallback(() => {}, []);
+  // Success toasts stay disabled; warnings and errors (refusals, redirects) are shown in a small banner.
+  const showToast = useCallback((msg, type) => {
+    if (type !== "warning" && type !== "error") return;
+    setNotice({ msg, type });
+  }, []);
+  useEffect(() => {
+    if (!notice) return undefined;
+    const t = setTimeout(() => setNotice(null), 6000);
+    return () => clearTimeout(t);
+  }, [notice]);
 
-  const isAdmin = currentUser?.role === "admin";
+  // Permissions come from the server's user object; fall back to role only if `permissions` is missing.
+  const perms = currentUser?.permissions;
+  const isAdminRole = currentUser?.role === "admin";
+  const canViewDatabase = !!currentUser && (perms ? perms.can_view_database === true : isAdminRole);
+  const canEditRecord = !!currentUser && (perms ? perms.can_edit_record === true : isAdminRole);
+  const canDeleteRecord = !!currentUser && (perms ? perms.can_delete_record === true : isAdminRole);
 
-  // Sync cookie & localStorage whenever currentUser changes
+  // Cache the server-provided identity (hint only)
   useEffect(() => {
     if (!currentUser) return;
-    const roleVal = currentUser.role === "admin" ? "admin" : "user";
-    document.cookie = `user_role=${roleVal}; path=/; SameSite=Lax`;
     localStorage.setItem("currentUser", JSON.stringify(currentUser));
   }, [currentUser]);
+
+  const clearSession = useCallback(() => {
+    localStorage.removeItem("sessionToken");
+    localStorage.removeItem("authToken");
+    localStorage.removeItem("currentUser");
+    localStorage.removeItem("gf_user_accounts");
+    setCurrentUser(null);
+    setSessionChecking(false);
+  }, []);
+
+  // Central 401 handling: any signed-in action answered 401 signs the user out.
+  useEffect(() => {
+    onSessionExpired = () => {
+      if (!localStorage.getItem("sessionToken") && !localStorage.getItem("authToken")) return;
+      clearSession();
+      window.history.replaceState(null, "", "/app?tab=entry");
+      setActiveTab("entry");
+      setNotice({ msg: "登录已过期，请重新登录", type: "warning" });
+    };
+    return () => { onSessionExpired = null; };
+  }, [clearSession]);
+
+  // Verify the stored session with the server on load.
+  useEffect(() => {
+    const token = localStorage.getItem("sessionToken") || localStorage.getItem("authToken");
+    if (!token) {
+      setSessionChecking(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { ok, status, data } = await apiPost("whoami");
+        if (cancelled) return;
+        if (ok && data && data.user && data.user.email) {
+          if (!localStorage.getItem("sessionToken")) localStorage.setItem("sessionToken", token);
+          setCurrentUser(normalizeServerUser(data.user));
+        } else if (status === 401 || status === 403) {
+          clearSession();
+        } else {
+          // Unexpected server answer: do not trust the cached role.
+          clearSession();
+        }
+      } catch {
+        // Network failure: identity cannot be verified, so show the login screen without trusting the cached
+        // role. The token is kept so a reload can retry.
+        if (!cancelled) setCurrentUser(null);
+      } finally {
+        if (!cancelled) setSessionChecking(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [clearSession]);
 
   // Determine Initial Tab from URL (/booklet, /app?tab=database-view, /app?tab=entry)
   const resolveTabFromUrl = useCallback(() => {
@@ -2846,7 +2880,7 @@ function GroupFinanceApp() {
     if (!currentUser) return;
     const checkAndEnforceRbac = () => {
       const targetTab = resolveTabFromUrl();
-      if (!isAdmin && (targetTab === "database-view" || targetTab === "booklet" || activeTab === "database-view" || activeTab === "booklet")) {
+      if (!canViewDatabase && (targetTab === "database-view" || activeTab === "database-view")) {
         window.history.replaceState(null, "", "/app?tab=entry");
         setActiveTab("entry");
         showToast("⚠️ 已为您自动跳转至【记账录入】页面", "warning");
@@ -2858,11 +2892,11 @@ function GroupFinanceApp() {
     checkAndEnforceRbac();
     window.addEventListener("popstate", checkAndEnforceRbac);
     return () => window.removeEventListener("popstate", checkAndEnforceRbac);
-  }, [currentUser, isAdmin, activeTab, resolveTabFromUrl, showToast]);
+  }, [currentUser, canViewDatabase, activeTab, resolveTabFromUrl, showToast]);
 
   // Navigate between tabs with RBAC guard
   const handleNavigateTab = useCallback((targetTab) => {
-    if (!isAdmin && (targetTab === "database-view" || targetTab === "booklet")) {
+    if (!canViewDatabase && targetTab === "database-view") {
       window.history.replaceState(null, "", "/app?tab=entry");
       setActiveTab("entry");
       showToast("⚠️ 已为您自动跳转至【记账录入】页面", "warning");
@@ -2876,13 +2910,17 @@ function GroupFinanceApp() {
     } else {
       window.history.pushState(null, "", "/app?tab=entry");
     }
-  }, [isAdmin, showToast]);
+  }, [canViewDatabase, showToast]);
 
   // Fetch Transactions from Backend API & Merge/Sync
   const fetchTransactionsFromApi = useCallback(async (showFeedback = false) => {
     setLoadingTransactions(true);
     try {
       const { ok, data } = await apiPost("list_transactions", { limit: 500 });
+      if (!ok && data && data.message && showFeedback) {
+        showToast(`⚠️ ${data.message}`, "warning");
+        return;
+      }
       if (ok && data.status === "success" && Array.isArray(data.transactions) && data.transactions.length > 0) {
         const normalized = data.transactions.map((t, i) => normalizeTx(t, i));
         setTransactions(normalized);
@@ -2914,7 +2952,6 @@ function GroupFinanceApp() {
       // Ignore URL parse error
     }
 
-    fetchTransactionsFromApi(false);
     (async () => {
       try {
         const { ok, data } = await apiPost("get_settings", {});
@@ -2946,7 +2983,13 @@ function GroupFinanceApp() {
         // Fallback to localStorage defaults
       }
     })();
-  }, [fetchTransactionsFromApi]);
+  }, [currentUser?.email]);
+
+  // Load the ledger only once the server has confirmed who is signed in.
+  useEffect(() => {
+    if (!currentUser) return;
+    fetchTransactionsFromApi(false);
+  }, [currentUser?.email, fetchTransactionsFromApi]);
 
   // Handlers for CRUD & Settings
   const handleRecordAdded = useCallback((newEntry, msg) => {
@@ -2963,6 +3006,11 @@ function GroupFinanceApp() {
     let realId = "tx-" + Date.now();
     try {
       const res = await apiPost("add_record", { date, item, income, expense, user });
+      const refusal = refusalMessage(res);
+      if (refusal) {
+        if (res.status !== 401) showToast(`⚠️ ${refusal}`, "warning");
+        return;
+      }
       if (res && res.ok && res.data) {
         realId = res.data.id || res.data.transaction?.id || realId;
       }
@@ -2980,8 +3028,9 @@ function GroupFinanceApp() {
   }, [fetchTransactionsFromApi, showToast]);
 
   const handleUpdateTransaction = useCallback(async (updatedTx) => {
+    if (!canEditRecord) return;
     try {
-      await apiPost("update_record", {
+      const res = await apiPost("update_record", {
         id: updatedTx.id,
         date: updatedTx.date,
         item: updatedTx.item,
@@ -2989,8 +3038,13 @@ function GroupFinanceApp() {
         expense: updatedTx.expense,
         user: updatedTx.user
       });
+      const refusal = refusalMessage(res);
+      if (refusal) {
+        if (res.status !== 401) showToast(`⚠️ ${refusal}`, "warning");
+        return;
+      }
     } catch {
-      // Continue with local state update
+      // Network exception only: continue with local state update (offline fallback)
     }
     setTransactions((prev) => {
       const next = prev.map((t) => (t.id === updatedTx.id ? normalizeTx(updatedTx) : t));
@@ -2999,11 +3053,12 @@ function GroupFinanceApp() {
     });
     await fetchTransactionsFromApi(false);
     showToast("✅ 记录已成功修改！收支总账与奉献册子已实时同步");
-  }, [fetchTransactionsFromApi, showToast]);
+  }, [canEditRecord, fetchTransactionsFromApi, showToast]);
 
   const handleDeleteTransaction = useCallback(async (targetTx) => {
+    if (!canDeleteRecord) return;
     try {
-      await apiPost("delete_record", {
+      const res = await apiPost("delete_record", {
         id: targetTx.id,
         year: targetTx.year,
         month: targetTx.month,
@@ -3012,8 +3067,13 @@ function GroupFinanceApp() {
         income: targetTx.income,
         expense: targetTx.expense
       });
+      const refusal = refusalMessage(res);
+      if (refusal) {
+        if (res.status !== 401) showToast(`⚠️ ${refusal}`, "warning");
+        return;
+      }
     } catch {
-      // Continue with local state update
+      // Network exception only: continue with local state update (offline fallback)
     }
     setTransactions((prev) => {
       const next = prev.filter((t) => t.id !== targetTx.id);
@@ -3022,113 +3082,152 @@ function GroupFinanceApp() {
     });
     await fetchTransactionsFromApi(false);
     showToast("✅ 记录已成功删除！结余已重新计算并实时同步");
-  }, [fetchTransactionsFromApi, showToast]);
+  }, [canDeleteRecord, fetchTransactionsFromApi, showToast]);
 
   const handleUpdateCategoryPresets = useCallback(async (nextIncome, nextExpense) => {
+    try {
+      const res = await apiPost("update_settings", {
+        income_items: nextIncome,
+        expense_items: nextExpense
+      });
+      const refusal = refusalMessage(res);
+      if (refusal) {
+        if (res.status !== 401) showToast(`⚠️ ${refusal}`, "warning");
+        return;
+      }
+    } catch {
+      // Network exception only: keep local copy (offline fallback)
+    }
     setIncomeItems(nextIncome);
     setExpenseItems(nextExpense);
     localStorage.setItem("gf_income_items", JSON.stringify(nextIncome));
     localStorage.setItem("gf_expense_items", JSON.stringify(nextExpense));
-    try {
-      await apiPost("update_settings", {
-        income_items: nextIncome,
-        expense_items: nextExpense
-      });
-    } catch {
-      // Persisted in localStorage
-    }
     showToast("✅ 收入与支出事项分类已更新并同步至记账录入！");
   }, [showToast]);
 
   const handleUpdateUserAccounts = useCallback(async (nextAccounts, changedAccount, removedEmail) => {
-    setUserAccounts(nextAccounts);
-    localStorage.setItem("gf_user_accounts", JSON.stringify(nextAccounts));
-    if (removedEmail) {
-      try {
-        await apiPost("delete_user", { email: removedEmail });
-      } catch {
-        // Ignore offline error
+    try {
+      if (removedEmail) {
+        const res = await apiPost("delete_user", { email: removedEmail });
+        const refusal = refusalMessage(res);
+        if (refusal) {
+          if (res.status !== 401) showToast(`⚠️ ${refusal}`, "warning");
+          return;
+        }
       }
-    }
-    if (changedAccount) {
-      try {
-        await apiPost("update_user_role", {
+      if (changedAccount) {
+        const res = await apiPost("update_user_role", {
           email: changedAccount.email,
           name: changedAccount.name,
           role: changedAccount.role
         });
-      } catch {
-        // Persisted in localStorage
+        const refusal = refusalMessage(res);
+        if (refusal) {
+          if (res.status !== 401) showToast(`⚠️ ${refusal}`, "warning");
+          return;
+        }
       }
-      // If current user's role was updated, sync immediately
-      if (currentUser && currentUser.email.toLowerCase() === changedAccount.email.toLowerCase()) {
-        setCurrentUser((prev) => ({ ...prev, role: changedAccount.role, name: changedAccount.name }));
+    } catch {
+      // Network exception only: keep local copy (offline fallback)
+    }
+    setUserAccounts(nextAccounts);
+    localStorage.setItem("gf_user_accounts", JSON.stringify(nextAccounts));
+    if (changedAccount && currentUser && currentUser.email.toLowerCase() === changedAccount.email.toLowerCase()) {
+      // Own role changed: re-read identity from the server rather than trusting the edit.
+      try {
+        const who = await apiPost("whoami");
+        if (who.ok && who.data && who.data.user) setCurrentUser(normalizeServerUser(who.data.user));
+      } catch {
+        // ignore
       }
     }
     showToast("✅ 同工权限设定已保存并实时生效！");
   }, [currentUser, showToast]);
 
   const handleUpdateBookletSettings = useCallback(async (nextBooklet) => {
+    try {
+      const res = await apiPost("update_settings", { booklet: nextBooklet });
+      const refusal = refusalMessage(res);
+      if (refusal) {
+        if (res.status !== 401) showToast(`⚠️ ${refusal}`, "warning");
+        return;
+      }
+    } catch {
+      // Network exception only: keep local copy (offline fallback)
+    }
     setBookletSettings(nextBooklet);
     localStorage.setItem("gf_booklet_settings", JSON.stringify(nextBooklet));
-    try {
-      await apiPost("update_settings", { booklet: nextBooklet });
-    } catch {
-      // Persisted in localStorage
-    }
     showToast("✅ 奉献册子表头与签名配置已保存并实时同步！");
   }, [showToast]);
 
   const handleUpdateGoogleOAuth = useCallback(async (clientId, clientSecret) => {
-    setGoogleClientId(clientId);
     try {
       const payload = { google_client_id: clientId };
       if (clientSecret) payload.google_client_secret = clientSecret;
-      await apiPost("update_settings", payload);
+      const res = await apiPost("update_settings", payload);
+      const refusal = refusalMessage(res);
+      if (refusal) {
+        if (res.status !== 401) showToast(`⚠️ ${refusal}`, "warning");
+        return;
+      }
     } catch {
-      // Ignore offline error
+      // Network exception only (offline fallback)
     }
+    setGoogleClientId(clientId);
     showToast("✅ Google OAuth 登录配置已保存！");
   }, [showToast]);
 
   // Login Handler: Check role permission & route to appropriate workspace
   const handleLoginSuccess = useCallback((token, userObj) => {
     localStorage.setItem("sessionToken", token);
-    const role = userObj.role === "admin" ? "admin" : "user";
-    const normalizedUser = {
-      email: userObj.email,
-      name: userObj.name || userObj.email.split("@")[0],
-      role
-    };
+    // Role and permissions come from the server's user object; the client never infers them.
+    const normalizedUser = normalizeServerUser(userObj);
     localStorage.setItem("currentUser", JSON.stringify(normalizedUser));
-    document.cookie = `user_role=${role}; path=/; SameSite=Lax`;
     setCurrentUser(normalizedUser);
     setOauthError(null);
 
-    if (role === "user") {
+    const targetTab = resolveTabFromUrl();
+    const allowDb = normalizedUser.permissions
+      ? normalizedUser.permissions.can_view_database === true
+      : normalizedUser.role === "admin";
+    if (!allowDb && targetTab === "database-view") {
       window.history.replaceState(null, "", "/app?tab=entry");
       setActiveTab("entry");
     } else {
-      const targetTab = resolveTabFromUrl();
       setActiveTab(targetTab);
     }
     showToast(`✅ 登录成功 (${normalizedUser.email})`);
   }, [resolveTabFromUrl, showToast]);
 
-  // Logout Handler: Clear session and return to LoginScreen
-  const handleLogout = useCallback(() => {
-    localStorage.removeItem("sessionToken");
-    localStorage.removeItem("currentUser");
-    document.cookie = "user_role=; path=/; max-age=0; SameSite=Lax";
-    setCurrentUser(null);
+  // Logout Handler: tell the server (clears the HttpOnly session cookie), then clear local state
+  const handleLogout = useCallback(async () => {
+    try {
+      await apiPost("logout");
+    } catch {
+      // Ignore failure: local sign-out proceeds regardless
+    }
+    clearSession();
     window.history.replaceState(null, "", "/app?tab=entry");
     setActiveTab("entry");
     showToast("已安全退出登录");
-  }, [showToast]);
+  }, [clearSession, showToast]);
 
   // Step 1: If not logged in, render Full-Page Login & Role Verification Screen
+  const noticeEl = notice && h("div", {
+    role: "alert",
+    "data-testid": "notice",
+    className: "fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm font-semibold shadow-lg no-print print:hidden"
+  }, notice.msg);
+
+  if (sessionChecking) {
+    return h("div", { className: "min-h-screen bg-slate-50 flex items-center justify-center text-slate-500 text-sm font-semibold", "data-testid": "session-loading" },
+      "正在验证登录状态…"
+    );
+  }
+
   if (!currentUser) {
     return h("div", { className: "min-h-screen bg-slate-50 font-sans text-slate-900 relative" },
+      noticeEl,
       h(LoginScreen, {
         userAccounts,
         googleClientId,
@@ -3146,10 +3245,11 @@ function GroupFinanceApp() {
       h("div", { className: "absolute top-[30%] right-[-5%] w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl" })
     ),
 
-    // Unified Top Banner Navigation (Displays modules based on verified role)
+    noticeEl,
+    // Unified Top Banner Navigation (Displays modules based on server-provided permissions)
     h(AppHeader, {
       currentUser,
-      isAdmin,
+      canViewDatabase,
       activeTab,
       onNavigateTab: handleNavigateTab,
       onLogout: handleLogout,
@@ -3168,7 +3268,7 @@ function GroupFinanceApp() {
       }),
 
       // Module 2: 🗄️ 数据库管理 (Admin Exclusive)
-      activeTab === "database-view" && isAdmin && h(DatabaseViewTab, {
+      activeTab === "database-view" && canViewDatabase && h(DatabaseViewTab, {
         currentUser,
         transactions,
         loadingTransactions,
@@ -3188,8 +3288,10 @@ function GroupFinanceApp() {
         showToast
       }),
 
-      // Module 3: 📖 奉献记录全册 (Admin Exclusive)
-      activeTab === "booklet" && isAdmin && h(BookletViewTab, {
+      // Module 3: 📖 奉献记录全册 (User Read-Only / Admin Editable)
+      activeTab === "booklet" && h(BookletViewTab, {
+        canViewDatabase,
+        canDelete: canDeleteRecord,
         transactions,
         bookletSettings,
         onDeleteTransaction: handleDeleteTransaction,
