@@ -33,7 +33,7 @@ on:
         default: ''
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
   pull-requests: write
   issues: write
@@ -184,14 +184,9 @@ jobs:
             const outcome = process.env.PLAN_OUTCOME === 'success' ? 'Succeeded' : 'Failed';
             cleanBody = [
               marker,
-              `### GCP FinOps Terraform \`plan\` ${outcome} for Workspace: \`default\``,
+              `### Terraform \`plan\` ${outcome} for Workspace: \`default\``,
               '',
-              '- `pytest` (65 tests): **Passed**',
-              '- `python3 preview.py` (daily + weekly HTML < 4096 chars): **Passed**',
-              '- `terraform fmt -check -recursive`: **Passed**',
-              '- `terraform validate`: **Passed**',
-              '',
-              '<details><summary>Show Plan Output</summary>',
+              '<details><summary>Show Output</summary>',
               '',
               '```diff',
               planOutput,
@@ -407,7 +402,7 @@ jobs:
 
           const serviceRows = [];
           if (functionUrl) {
-            serviceRows.push(`| **Cloud Run Function URL** | \`${functionUrl}\` |`);
+            serviceRows.push(`| **Cloud Run Function URL** | ${functionUrl} |`);
           }
           if (billingDataset) {
             serviceRows.push(`| **Billing Export Dataset** | \`${billingDataset}\` |`);
@@ -427,14 +422,14 @@ jobs:
 
           const lines = [
             marker,
-            `### GCP FinOps Terraform \`apply\` ${outcome} for Workspace: \`default\``,
+            `### Terraform \`apply\` ${outcome} for Workspace: \`default\``,
             '',
           ];
 
           if (serviceRows.length > 0) {
-            lines.push('#### Deployed GCP FinOps Resources');
+            lines.push('#### Deployed GCP Services');
             lines.push('');
-            lines.push('| Resource | Value / Command |');
+            lines.push('| Service / Resource | Endpoint / Value |');
             lines.push('|---|---|');
             lines.push(...serviceRows);
             lines.push('');
