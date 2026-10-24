@@ -45,6 +45,8 @@ class BillingData:
             from google.cloud import bigquery as bigquery_module  # lazy: keeps tests light
         self._bigquery = bigquery_module
         self._partition_clause = None
+        self.last_service_credits: dict[str, float] = {}
+        self.last_weekly_credits: tuple[dict[str, float], dict[str, float]] = ({}, {})
 
     # -- helpers ---------------------------------------------------------
 
@@ -95,7 +97,9 @@ class BillingData:
     def service_costs(self, start: datetime, end: datetime):
         """({service: gross cost}, currency) for [start, end)."""
         sql = f"""
-            SELECT service.description AS service_name, currency, SUM(cost) AS cost
+            SELECT service.description AS service_name, currency,
+                   SUM(cost) AS cost,
+                   SUM((SELECT IFNULL(SUM(c.amount), 0) FROM UNNEST(credits) AS c)) AS credits
             FROM `{self._table}`
             WHERE usage_start_time >= @start AND usage_start_time < @end
               {self._partition_filter()}
@@ -103,8 +107,12 @@ class BillingData:
         """
         rows = self._run(sql, [self._ts("start", start), self._ts("end", end)])
         totals: dict = {}
+        credits: dict[str, float] = {}
         for r in rows:
-            totals[r["service_name"]] = totals.get(r["service_name"], 0.0) + float(r["cost"] or 0.0)
+            name = r["service_name"]
+            totals[name] = totals.get(name, 0.0) + float(r["cost"] or 0.0)
+            credits[name] = credits.get(name, 0.0) + float(r.get("credits") or 0.0)
+        self.last_service_credits = credits
         return totals, _single_currency(rows, self._fallback)
 
     def month_to_date(self, start: datetime, end: datetime):
@@ -131,7 +139,9 @@ class BillingData:
         sql = f"""
             SELECT service.description AS service_name, currency,
                    SUM(IF(usage_start_time >= @mid, cost, 0)) AS current_cost,
-                   SUM(IF(usage_start_time < @mid, cost, 0)) AS previous_cost
+                   SUM(IF(usage_start_time < @mid, cost, 0)) AS previous_cost,
+                   SUM(IF(usage_start_time >= @mid, (SELECT IFNULL(SUM(c.amount), 0) FROM UNNEST(credits) AS c), 0)) AS current_credits,
+                   SUM(IF(usage_start_time < @mid, (SELECT IFNULL(SUM(c.amount), 0) FROM UNNEST(credits) AS c), 0)) AS previous_credits
             FROM `{self._table}`
             WHERE usage_start_time >= @start AND usage_start_time < @end
               {self._partition_filter()}
@@ -142,19 +152,25 @@ class BillingData:
         )
         current: dict = {}
         previous: dict = {}
+        current_credits: dict[str, float] = {}
+        previous_credits: dict[str, float] = {}
         for r in rows:
             name = r["service_name"]
             current[name] = current.get(name, 0.0) + float(r["current_cost"] or 0.0)
             previous[name] = previous.get(name, 0.0) + float(r["previous_cost"] or 0.0)
+            current_credits[name] = current_credits.get(name, 0.0) + float(r.get("current_credits") or 0.0)
+            previous_credits[name] = previous_credits.get(name, 0.0) + float(r.get("previous_credits") or 0.0)
+        self.last_weekly_credits = (current_credits, previous_credits)
         return current, previous, _single_currency(rows, self._fallback)
 
     def sku_costs(self, start: datetime, end: datetime, services: list):
-        """{service: [{name, cost}] sorted by cost desc} for [start, end)."""
+        """{service: [{name, cost, credits, net_cost}] sorted by cost desc} for [start, end)."""
         if not services:
             return {}
         sql = f"""
             SELECT service.description AS service_name, sku.description AS sku_name,
-                   SUM(cost) AS cost
+                   SUM(cost) AS cost,
+                   SUM((SELECT IFNULL(SUM(c.amount), 0) FROM UNNEST(credits) AS c)) AS credits
             FROM `{self._table}`
             WHERE usage_start_time >= @start AND usage_start_time < @end
               AND service.description IN UNNEST(@services)
@@ -169,8 +185,15 @@ class BillingData:
         rows = self._run(sql, params)
         out: dict = {}
         for r in rows:
+            cost = float(r.get("cost") or 0.0)
+            cred = float(r.get("credits") or 0.0)
             out.setdefault(r["service_name"], []).append(
-                {"name": r["sku_name"] or "(no SKU)", "cost": float(r["cost"] or 0.0)}
+                {
+                    "name": r["sku_name"] or "(no SKU)",
+                    "cost": cost,
+                    "credits": cred,
+                    "net_cost": cost + cred,
+                }
             )
         for items in out.values():
             items.sort(key=lambda s: (-s["cost"], s["name"]))

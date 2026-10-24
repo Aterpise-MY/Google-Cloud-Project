@@ -35,10 +35,31 @@ def test_mtd_window_starts_on_first(cfg, deps, data):
 
 
 def test_credits_flow_into_message(cfg, deps, data, tg):
-    data.service = ({"Cloud Run": 1.0}, "MYR")
+    data.service = ({"Cloud Run": 1.0, "Vertex AI": 5.0}, "MYR")
+    data.service_credits = {"Cloud Run": -1.0, "Vertex AI": -2.0}
     data.mtd = (20.0, -5.0, "MYR")
     run(cfg, deps)
-    assert "Net Month-to-Date: <b>RM15.00</b>" in tg.sent[0]["text"]
+    text = tg.sent[0]["text"]
+    assert "Credits (Yesterday): <b>-RM3.00</b>" in text
+    assert "Net Yesterday (Real Cost): <b>RM3.00</b>" in text
+    assert "Net Month-to-Date: <b>RM15.00</b>" in text
+    assert "Active Services: <b>2</b>" in text
+    assert "(credit <code>-RM1.00</code> → real <b>RM0.00</b>)" in text
+    assert "(credit <code>-RM2.00</code> → real <b>RM3.00</b>)" in text
+
+
+def test_weekly_credits_flow_into_message(cfg, deps, data, tg):
+    data.weekly = ({"Vertex AI": 10.0, "Cloud Run": 2.0}, {"Vertex AI": 5.0, "Cloud Run": 1.0}, "MYR")
+    data.weekly_credits = ({"Vertex AI": -4.0, "Cloud Run": -2.0}, {"Vertex AI": -1.0, "Cloud Run": -1.0})
+    data.skus = {"Vertex AI": [{"name": "Flash input", "cost": 6.0, "credits": -2.0}]}
+    handle_payload({"report_type": "weekly"}, cfg, deps, now=NOW)
+    text = tg.sent[0]["text"]
+    assert "🎁 Credits:     <code>-RM6.0000</code>" in text
+    assert "💎 Real (Net):  <code>RM6.0000</code>" in text
+    assert "💎 Last (Net):  <code>RM4.0000</code>" in text
+    assert "Credits: <code>-RM4.0000</code> → Real: <code>RM6.0000</code>" in text
+    assert "Credits: <code>-RM2.0000</code> → Real: <code>RM0.0000</code>" in text
+    assert "(real RM4.000)" in text
 
 
 def test_timezone_changes_the_day_boundary(deps, data):
