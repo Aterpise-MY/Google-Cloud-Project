@@ -28,6 +28,11 @@ class Settings:
     # Google OAuth 2.0 Client ID & Client Secret
     google_client_id: str = ""
     google_client_secret: str = field(default="", repr=False)
+    # HMAC key for signed session tokens. Empty: derived from pipeline_token, else random per process.
+    session_secret: str = field(default="", repr=False)
+    # Local development only: accept test-*/google-account-signin/provider=google credentials and
+    # /auth/google/login?email= without a verified Google identity. Never enable in a deployed service.
+    allow_dev_login: bool = False
 
     @classmethod
     def from_env(cls, env=os.environ) -> "Settings":
@@ -51,6 +56,8 @@ class Settings:
             booklet_password=g("BOOKLET_PASSWORD", ""),
             google_client_id="" if raw_cid in placeholders else raw_cid,
             google_client_secret="" if raw_csec in placeholders else raw_csec,
+            session_secret=g("SESSION_SECRET", "") or "",
+            allow_dev_login=(g("ALLOW_DEV_LOGIN", "") or "").strip().lower() in ("1", "true", "yes", "on"),
         )
 
     def now(self) -> datetime:

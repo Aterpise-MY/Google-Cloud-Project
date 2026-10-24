@@ -189,6 +189,13 @@ td.col-act {
     display: none !important;
   }
 }
+/* Admin-only controls are hidden unless ROLE_SCRIPT confirmed the admin role hint (fail-closed).
+   The same static file is served to every viewer; the server enforces permissions regardless. */
+html:not(.gf-admin) .col-act,
+html:not(.gf-admin) .btn-del,
+html:not(.gf-admin) a[href*="database-view"] {
+  display: none !important;
+}
 """.strip() % {"serif": SERIF, "calibri": CALIBRI, "arial": ARIAL}
 
 PRINT_CSS = """
@@ -292,26 +299,20 @@ def _footer(closed: bool, closing_date: Optional[date], verify_by: str, verify_n
             f'</div>')
 
 
-DELETE_SCRIPT = """<script>
+# Runs in <head>: reveals admin-only controls only when the server-set user_role hint is exactly "admin".
+# Viewers with no role (booklet password), users, and anything unparseable keep them hidden.
+ROLE_SCRIPT = """<script>
 (function() {
   try {
-    var u = JSON.parse(localStorage.getItem('currentUser') || 'null');
-    var isUserCookie = document.cookie.indexOf('user_role=user') !== -1;
-    if ((u && u.role && u.role !== 'admin') || isUserCookie) {
-      var style = document.createElement('style');
-      style.textContent = '.col-act, .btn-del, a[href*="database-view"] { display: none !important; }';
-      document.head.appendChild(style);
+    if (/(?:^|;\\s*)user_role=admin(?:;|$)/.test(document.cookie)) {
+      document.documentElement.className += ' gf-admin';
     }
   } catch (e) {}
 })();
+</script>"""
+
+DELETE_SCRIPT = """<script>
 async function deleteEntry(year, month, dateStr, item, income, expense, btn) {
-  try {
-    var u = JSON.parse(localStorage.getItem('currentUser') || 'null');
-    if ((u && u.role && u.role !== 'admin') || document.cookie.indexOf('user_role=user') !== -1) {
-      alert('权限不足：仅管理员 (Admin) 可删除记录。');
-      return;
-    }
-  } catch (e) {}
   var amtStr = Number(income) > 0 ? ('收入: ' + income) : (Number(expense) > 0 ? ('支出: ' + expense) : '');
   var msg = '确定要删除这条记录吗？\\n\\n' +
             '• 日期: ' + dateStr + '\\n' +
@@ -321,10 +322,20 @@ async function deleteEntry(year, month, dateStr, item, income, expense, btn) {
   if (!confirm(msg)) return;
   btn.disabled = true;
   btn.innerText = '删除中...';
+  function restore() {
+    btn.disabled = false;
+    btn.innerText = '🗑️ 删除';
+  }
   try {
+    var headers = { 'Content-Type': 'application/json' };
+    try {
+      var tok = localStorage.getItem('sessionToken') || localStorage.getItem('authToken');
+      if (tok) headers['Authorization'] = 'Bearer ' + tok;
+    } catch (e) {}
     var res = await fetch('/api', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      headers: headers,
       body: JSON.stringify({
         action: 'delete_record',
         year: parseInt(year, 10),
@@ -335,19 +346,22 @@ async function deleteEntry(year, month, dateStr, item, income, expense, btn) {
         expense: parseFloat(expense) || 0
       })
     });
-    var data = await res.json();
-    if (res.ok && data.status === 'success') {
+    var data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    if (res.ok && data && data.status === 'success') {
       alert('✅ 记录已成功删除！账目结存已自动重新计算。');
       window.location.reload();
-    } else {
-      alert('❌ 删除失败: ' + (data.message || '未知错误'));
-      btn.disabled = false;
-      btn.innerText = '🗑️ 删除';
+      return;
     }
+    var reason = (data && data.message) ||
+                 (res.status === 401 ? '请先登录。' :
+                  res.status === 403 ? '权限不足：仅管理员 (Admin) 可删除记录。' :
+                  ('HTTP ' + res.status));
+    alert('❌ 删除失败: ' + reason);
+    restore();
   } catch (err) {
     alert('❌ 请求失败: ' + err.message);
-    btn.disabled = false;
-    btn.innerText = '🗑️ 删除';
+    restore();
   }
 }
 </script>"""
@@ -425,11 +439,12 @@ def render_month_html(month: Month, *, closed: bool = False, closing_date: Optio
                              verify_by=verify_by, verify_name=verify_name,
                              editable=editable)
     script_html = f"\n{DELETE_SCRIPT}\n" if editable else ""
+    role_html = f"\n{ROLE_SCRIPT}" if (show_nav or editable) else ""
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>小组每月奉献记录 {month.year}-{month.month:02d}</title>
-<style>{CSS}</style></head><body>
+<style>{CSS}</style>{role_html}</head><body>
 {nav_html}
 <div class="sheet-wrap">
 {card}
@@ -468,7 +483,8 @@ def render_all_months_html(months: Dict[YM, Month], *, current_ym: YM,
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>小组每月奉献记录 ({current_ym[0]}年全记录)</title>
-<style>{CSS}</style></head><body>
+<style>{CSS}</style>
+{ROLE_SCRIPT}</head><body>
 <div class="nav"><div class="nav-inner">
   <div class="nav-brand">小组每月奉献记录 <span class="badge">全表连排视图 (从上到下)</span></div>
   <div class="nav-links">

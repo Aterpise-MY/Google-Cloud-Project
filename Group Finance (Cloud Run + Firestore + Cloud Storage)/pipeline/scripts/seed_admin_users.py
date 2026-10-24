@@ -6,6 +6,9 @@ Seeds:
   - admin@groupfinance.com
   - brendon.ang20011007@gmail.com
 
+No default password is hardcoded: accounts sign in with Google OAuth by default,
+or use ADMIN_SEED_PASSWORD if explicitly configured.
+
 Usage:
   FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 PYTHONPATH="pipeline" pipeline/.venv/bin/python pipeline/scripts/seed_admin_users.py
 """
@@ -22,7 +25,7 @@ from zoneinfo import ZoneInfo
 # Add pipeline directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from ledger_pipeline.firestore_db import DEFAULT_ADMIN_USERS, FirestoreLedgerDB, hash_password
+from ledger_pipeline.firestore_db import FirestoreLedgerDB
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("seed_admins")
@@ -33,28 +36,24 @@ ADMIN_ACCOUNTS: List[Dict[str, Any]] = [
         "name": "Admin",
         "role": "admin",
         "status": "active",
-        "password": os.environ.get("ADMIN_SEED_PASSWORD", ""),
     },
     {
         "email": "admin@ebteq.desk",
         "name": "Admin (Ebteq Desk)",
         "role": "admin",
         "status": "active",
-        "password": os.environ.get("ADMIN_SEED_PASSWORD", ""),
     },
     {
         "email": "admin@groupfinance.com",
         "name": "Admin",
         "role": "admin",
         "status": "active",
-        "password": os.environ.get("ADMIN_SEED_PASSWORD", ""),
     },
     {
         "email": "brendon.ang20011007@gmail.com",
         "name": "Brendon Ang",
         "role": "admin",
         "status": "active",
-        "password": os.environ.get("ADMIN_SEED_PASSWORD", ""),
     },
 ]
 

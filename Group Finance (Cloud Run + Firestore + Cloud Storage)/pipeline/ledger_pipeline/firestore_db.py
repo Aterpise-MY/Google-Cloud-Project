@@ -24,7 +24,16 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
-LEGACY_COMPROMISED_HASHES = frozenset({hash_password("Abc1234#"), hash_password("User1234#")})
+# Passwords that were published in this repository as seeded defaults. Production Firestore very
+# likely still stores their hashes, so they must never authenticate anybody, in any mode.
+PUBLISHED_DEFAULT_PASSWORDS = frozenset({"Abc1234#", "User1234#"})
+PUBLISHED_DEFAULT_PASSWORD_HASHES = frozenset(hash_password(p) for p in PUBLISHED_DEFAULT_PASSWORDS)
+LEGACY_COMPROMISED_HASHES = PUBLISHED_DEFAULT_PASSWORD_HASHES
+
+
+def is_published_default_password(password: Optional[str]) -> bool:
+    return bool(password) and (password in PUBLISHED_DEFAULT_PASSWORDS
+                               or hash_password(password) in PUBLISHED_DEFAULT_PASSWORD_HASHES)
 
 
 def permissions_for_role(role: str) -> Dict[str, bool]:
@@ -44,8 +53,6 @@ DEFAULT_ADMIN_USERS: Dict[str, Dict[str, Any]] = {
         "name": "Brendon",
         "role": "admin",
         "status": "active",
-        "permissions": permissions_for_role("admin"),
-        "password_hash": "",
     },
 }
 
@@ -56,8 +63,6 @@ DEFAULT_STANDARD_USERS: Dict[str, Dict[str, Any]] = {
         "name": "Rivaldo",
         "role": "user",
         "status": "active",
-        "permissions": permissions_for_role("user"),
-        "password_hash": "",
     },
 }
 
@@ -472,49 +477,49 @@ class FirestoreLedgerDB:
                 log.warning("Failed to check month closing in Firestore: %s", exc)
         return ym_str in self._memory_closings
 
+    @staticmethod
+    def _password_matches(stored_hash: Any, password: str) -> bool:
+        if not isinstance(stored_hash, str) or not stored_hash:
+            return False
+        if stored_hash in PUBLISHED_DEFAULT_PASSWORD_HASHES or stored_hash in LEGACY_COMPROMISED_HASHES:
+            return False
+        return hmac.compare_digest(stored_hash, hash_password(password))
+
     def verify_user(self, username: str, password: str) -> bool:
-        """Verifies username and password hash against stored user credentials."""
-        if not username or not password:
+        """Verifies an active user's stored password hash. There are no built-in credentials.
+
+        The published seed passwords (Abc1234#, User1234#) never verify, even if their hash is stored.
+        Users without a password hash cannot use password login (Google sign-in is the real path).
+        """
+        if not username or not password or is_published_default_password(password):
+            return False
+        if hash_password(password) in LEGACY_COMPROMISED_HASHES:
             return False
         clean_user = username.lower().strip()
-        target_hash = hash_password(password)
-        if target_hash in LEGACY_COMPROMISED_HASHES:
-            return False
         if self._client:
             try:
                 doc = self._client.collection("users").document(clean_user).get()
                 if doc.exists:
-                    stored_hash = doc.to_dict().get("password_hash")
-                    if stored_hash in LEGACY_COMPROMISED_HASHES:
-                        return False
-                    if stored_hash and str(stored_hash).strip() and hmac.compare_digest(stored_hash, target_hash):
+                    data = doc.to_dict() or {}
+                    if data.get("status") == "active" and self._password_matches(data.get("password_hash"), password):
                         return True
                 docs = self._client.collection("users").where("email", "==", clean_user).limit(1).stream()
                 for d in docs:
-                    stored_hash = (d.to_dict() or {}).get("password_hash")
-                    if stored_hash in LEGACY_COMPROMISED_HASHES:
-                        return False
-                    if stored_hash and str(stored_hash).strip() and hmac.compare_digest(stored_hash, target_hash):
+                    data = d.to_dict() or {}
+                    if data.get("status") == "active" and self._password_matches(data.get("password_hash"), password):
                         return True
             except Exception as exc:
                 log.warning("Firestore user lookup failed: %s", exc)
 
-        # In-memory user verification
+        # In-memory store (offline mode, or Firestore unavailable)
         mem_user = self._memory_users.get(clean_user)
         if mem_user and mem_user.get("status") == "active":
-            mem_hash = mem_user.get("password_hash")
-            if mem_hash in LEGACY_COMPROMISED_HASHES:
-                return False
-            if mem_hash and str(mem_hash).strip() and hmac.compare_digest(mem_hash, target_hash):
+            if self._password_matches(mem_user.get("password_hash"), password):
                 return True
         for u in self._memory_users.values():
             if str(u.get("email", "")).lower().strip() == clean_user and u.get("status") == "active":
-                mem_hash = u.get("password_hash")
-                if mem_hash in LEGACY_COMPROMISED_HASHES:
-                    return False
-                if mem_hash and str(mem_hash).strip() and hmac.compare_digest(mem_hash, target_hash):
+                if self._password_matches(u.get("password_hash"), password):
                     return True
-
         return False
 
     def is_admin_user(self, email: str) -> bool:
@@ -532,42 +537,40 @@ class FirestoreLedgerDB:
                 for d in docs:
                     data = d.to_dict() or {}
                     return data.get("role") == "admin" and data.get("status") == "active"
+                return False   # Firestore answered: no such user (deletion takes effect immediately)
             except Exception as exc:
                 log.warning("Firestore is_admin_user lookup failed: %s", exc)
 
-        # In-memory store fallback
+        # In-memory store (offline mode, or Firestore unavailable). No hard-coded admin fallback.
         user = self._memory_users.get(clean_email)
         if user:
             return user.get("role") == "admin" and user.get("status") == "active"
         for u in self._memory_users.values():
             if str(u.get("email", "")).lower().strip() == clean_email:
                 return u.get("role") == "admin" and u.get("status") == "active"
-
-        # Default fallback admin list
-        if clean_email in DEFAULT_ADMIN_USERS:
-            fallback = DEFAULT_ADMIN_USERS[clean_email]
-            return fallback.get("role") == "admin" and fallback.get("status") == "active"
         return False
 
     def add_admin_user(self, email: str, name: str = "", role: str = "admin",
                        password: Optional[str] = None) -> Dict[str, Any]:
-        """Seeds or manages admin user document in collection 'users'."""
+        """Seeds or manages admin user document in collection 'users'.
+
+        Without `password` no password hash is written (the user signs in with Google). The published
+        seed passwords are refused: storing them would only create a credential that never verifies.
+        """
         clean_email = email.lower().strip()
         tz = ZoneInfo("Asia/Kuala_Lumpur")
         now = datetime.now(tz)
-        pw_hash = ""
-        if password and str(password).strip():
-            candidate = hash_password(str(password).strip())
-            if candidate not in LEGACY_COMPROMISED_HASHES:
-                pw_hash = candidate
-        user_data = {
+        user_data: Dict[str, Any] = {
             "email": clean_email,
             "name": name or clean_email.split("@")[0],
             "role": role,
             "status": "active",
-            "password_hash": pw_hash,
             "created_at": now.isoformat(),
         }
+        if password and (is_published_default_password(password) or hash_password(str(password).strip()) in LEGACY_COMPROMISED_HASHES):
+            log.warning("Refusing to store a published default password for %s; no password hash written.", clean_email)
+        elif password and str(password).strip():
+            user_data["password_hash"] = hash_password(str(password).strip())
         if self._client:
             try:
                 self._client.collection("users").document(clean_email).set(user_data, merge=True)
@@ -594,6 +597,7 @@ class FirestoreLedgerDB:
                     data = dict(d.to_dict() or {})
                     data.pop("password_hash", None)
                     return data
+                return None   # Firestore answered: no such user
             except Exception as exc:
                 log.warning("Firestore get_user lookup failed: %s", exc)
 
@@ -625,7 +629,7 @@ class FirestoreLedgerDB:
                             "name": data.get("name") or em.split("@")[0],
                             "role": r_val,
                             "status": data.get("status", "active"),
-                            "permissions": data.get("permissions") or permissions_for_role(r_val),
+                            "permissions": permissions_for_role(r_val),
                         }
                 if fs_users:
                     merged = fs_users
@@ -648,7 +652,7 @@ class FirestoreLedgerDB:
                     "name": u.get("name") or em.split("@")[0],
                     "role": r_val,
                     "status": u.get("status", "active"),
-                    "permissions": u.get("permissions") or permissions_for_role(r_val),
+                    "permissions": permissions_for_role(r_val),
                 }
 
         users_list = list(merged.values())
@@ -692,38 +696,34 @@ class FirestoreLedgerDB:
         if clean_role not in ("admin", "user"):
             raise ValueError(f"Invalid role: {role}")
 
-        existing = self._memory_users.get(clean_email, {})
+        mem_existing = self._memory_users.get(clean_email, {})
+        # Read the authoritative record so an existing user's status (e.g. inactive) is preserved.
+        existing = self.get_user(clean_email) or {k: v for k, v in mem_existing.items() if k != "password_hash"}
         tz = ZoneInfo("Asia/Kuala_Lumpur")
         now = datetime.now(tz)
-        pw_hash = existing.get("password_hash", "")
-        if pw_hash in LEGACY_COMPROMISED_HASHES:
-            pw_hash = ""
-        if password and str(password).strip():
-            candidate = hash_password(str(password).strip())
-            pw_hash = candidate if candidate not in LEGACY_COMPROMISED_HASHES else ""
         user_data = {
             "email": clean_email,
             "name": name or existing.get("name") or clean_email.split("@")[0],
             "role": clean_role,
             "status": existing.get("status", "active"),
-            "permissions": permissions_for_role(clean_role),
-            "password_hash": pw_hash,
             "updated_at": now.isoformat(),
+            "created_at": existing.get("created_at") or now.isoformat(),
         }
-        if "created_at" in existing:
-            user_data["created_at"] = existing["created_at"]
-        else:
-            user_data["created_at"] = now.isoformat()
+        if password and (is_published_default_password(password) or hash_password(str(password).strip()) in LEGACY_COMPROMISED_HASHES):
+            user_data["password_hash"] = ""
+        elif password and str(password).strip():
+            user_data["password_hash"] = hash_password(str(password).strip())
 
         if self._client:
             try:
+                # merge=True leaves any stored password_hash untouched; no default password is ever written
                 self._client.collection("users").document(clean_email).set(user_data, merge=True)
             except Exception as exc:
                 log.error("Failed to update user role in Firestore: %s", exc)
 
-        self._memory_users[clean_email] = user_data
+        self._memory_users[clean_email] = {**mem_existing, **user_data}
         out = dict(user_data)
-        out.pop("password_hash", None)
+        out["permissions"] = permissions_for_role(clean_role)
         return out
 
     def get_app_settings(self, include_secret: bool = False) -> Dict[str, Any]:

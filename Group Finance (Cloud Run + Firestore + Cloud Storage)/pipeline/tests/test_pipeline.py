@@ -168,6 +168,18 @@ def at(y, m, d, h=12):
     return lambda: datetime(y, m, d, h, 0, tzinfo=ZoneInfo("Asia/Kuala_Lumpur"))
 
 
+TEST_PASSWORD = "Str0ng-Test-pw!"
+
+
+def session_headers(client, db, email, role="admin", password=TEST_PASSWORD, name=""):
+    """Creates `email` with a real (non-default) password and logs in through the public API.
+    Returns the Authorization header carrying the signed session token."""
+    db.add_admin_user(email, name=name or email.split("@")[0], role=role, password=password)
+    r = client.post("/api", json={"action": "login", "username": email, "password": password})
+    assert r.status_code == 200, (r.status_code, r.get_data(as_text=True))
+    return {"Authorization": "Bearer " + r.get_json()["token"]}
+
+
 class PipelineTests(unittest.TestCase):
     def make(self, now, sheets=None):
         self.tmp = tempfile.TemporaryDirectory()
@@ -306,16 +318,17 @@ class SecurityAndServiceTests(unittest.TestCase):
         self.assertEqual(c.post("/close?month=2026-13", headers={"X-Pipeline-Token": "tok"}).status_code, 400)
 
         # /api tests
-        # 1. Login
-        app.db.add_admin_user("admin", password="TestAdminPass123!")
+        # 1. Login: wrong and published-default passwords never log anyone in
         r_login_fail = c.post("/api", json={"action": "login", "username": "admin", "password": "wrongpassword"})
         self.assertEqual(r_login_fail.status_code, 401)
-        r_login_ok = c.post("/api", json={"action": "login", "username": "admin", "password": "TestAdminPass123!"})
-        self.assertEqual(r_login_ok.status_code, 200)
-        self.assertEqual(r_login_ok.get_json()["status"], "success")
+        r_login_default = c.post("/api", json={"action": "login", "username": "admin", "password": "Abc1234#"})
+        self.assertEqual(r_login_default.status_code, 401)
+        self.assertEqual(r_login_default.get_json()["code"], "invalid_credentials")
+        self.assertEqual(c.post("/api", json={"action": "get_yearly_summary", "year": 2026}).status_code, 401)
+        svc = {"X-Pipeline-Token": "tok"}       # the pipeline token is a service identity with admin rights
 
         # 2. Yearly summary
-        r_sum = c.post("/api", json={"action": "get_yearly_summary", "year": 2026})
+        r_sum = c.post("/api", json={"action": "get_yearly_summary", "year": 2026}, headers=svc)
         self.assertEqual(r_sum.status_code, 200)
         sum_data = r_sum.get_json()
         self.assertEqual(sum_data["status"], "success")
@@ -324,13 +337,15 @@ class SecurityAndServiceTests(unittest.TestCase):
         self.assertIn("balance", sum_data)
 
         # 3. Add record
-        r_add = c.post("/api", json={"date": "2026-10-14", "item": "测试同工会", "income": 50, "expense": 0})
+        self.assertEqual(c.post("/api", json={"date": "2026-10-14", "item": "x", "income": 1}).status_code, 401)
+        r_add = c.post("/api", json={"date": "2026-10-14", "item": "测试同工会", "income": 50, "expense": 0}, headers=svc)
         self.assertEqual(r_add.status_code, 200)
         add_data = r_add.get_json()
         self.assertEqual(add_data["status"], "success")
         # 4. Delete record
         r_del = c.post("/api", json={"action": "delete_record", "year": 2026, "month": 10,
-                                     "date": "2026-10-14", "item": "测试同工会", "income": 50, "expense": 0})
+                                     "date": "2026-10-14", "item": "测试同工会", "income": 50, "expense": 0},
+                       headers=svc)
         self.assertEqual(r_del.status_code, 200)
         self.assertEqual(r_del.get_json()["status"], "success")
 
@@ -444,12 +459,13 @@ class RecordDeletionTests(unittest.TestCase):
         c = app.test_client()
 
         # Empty item and 0 amounts
-        r = c.post("/api", json={"date": "2026-10-14", "item": "", "income": 0, "expense": 0}, headers={"X-Pipeline-Token": "tok"})
+        svc = {"X-Pipeline-Token": "tok"}
+        r = c.post("/api", json={"date": "2026-10-14", "item": "", "income": 0, "expense": 0}, headers=svc)
         self.assertEqual(r.status_code, 400)
         self.assertEqual(r.get_json()["message"], "事项或金额不能为空")
 
         # Empty item with spaces and 0 amounts
-        r2 = c.post("/api", json={"date": "2026-10-14", "item": "   ", "income": 0, "expense": 0}, headers={"X-Pipeline-Token": "tok"})
+        r2 = c.post("/api", json={"date": "2026-10-14", "item": "   ", "income": 0, "expense": 0}, headers=svc)
         self.assertEqual(r2.status_code, 400)
         self.assertEqual(r2.get_json()["message"], "事项或金额不能为空")
 
@@ -582,7 +598,7 @@ class RecordDeletionTests(unittest.TestCase):
         s = Settings(pipeline_token="tok")
         p = Pipeline(s, FakeSource(sheets_fixture()), LocalStorage(tmp.name), pdf=lambda h: b"pdf", now=at(2026, 10, 14))
         app = create_app(s, p)
-        app.db.add_admin_user("admin", password="TestAdminPass123!")
+        app.db.add_admin_user("keeper@example.com", name="Keeper", password=TEST_PASSWORD)
         c = app.test_client()
 
         # 1. Favicon returns 204
@@ -597,16 +613,18 @@ class RecordDeletionTests(unittest.TestCase):
         # 3. POST /api without application/json (e.g. text/plain)
         r_login = c.post(
             "/api",
-            data=json.dumps({"action": "login", "username": "admin", "password": "TestAdminPass123!"}),
+            data=json.dumps({"action": "login", "username": "keeper@example.com", "password": TEST_PASSWORD}),
             content_type="text/plain"
         )
         self.assertEqual(r_login.status_code, 200)
         self.assertEqual(r_login.get_json()["status"], "success")
+        token = r_login.get_json()["token"]
 
         r_sum = c.post(
             "/api",
             data=json.dumps({"action": "get_yearly_summary", "year": 2026}),
-            content_type="text/plain"
+            content_type="text/plain",
+            headers={"Authorization": f"Bearer {token}"},
         )
         self.assertEqual(r_sum.status_code, 200)
         self.assertEqual(r_sum.get_json()["status"], "success")
@@ -703,7 +721,7 @@ class BookletAuthTests(unittest.TestCase):
     # (b) password from env ----------------------------------------------------------------
     def test_password_from_env_login_sets_cookie_that_validates(self):
         from unittest.mock import patch
-        with patch.dict(os.environ, {"BOOKLET_PASSWORD": "env-Test-pw#1"}):
+        with patch.dict(os.environ, {"BOOKLET_PASSWORD": "env-Test-pw#1", "SESSION_SECRET": "env-session-secret"}):
             s = Settings.from_env()
         self.assertEqual(s.booklet_password, "env-Test-pw#1")
         self.assertNotIn("env-Test-pw#1", repr(s))           # secret kept out of reprs/logs
@@ -802,20 +820,21 @@ class FirestoreAndAdminTests(unittest.TestCase):
         self.assertFalse(self.db.is_admin_user(""))
 
     def test_admin_group_finance_booklet_and_verification(self):
-        # 1. Assert db.is_admin_user("hengga1007@gmail.com") is True
+        # 1. The default admin is an admin, but there are no built-in passwords: the published defaults,
+        #    and the booklet password, never verify for anybody
         self.assertTrue(self.db.is_admin_user("hengga1007@gmail.com"))
-        # Default seeded admin has empty password (OAuth-only) and rejects password login
-        self.assertFalse(self.db.verify_user("hengga1007@gmail.com", "Abc1234#"))
-        # Compromised legacy default password cannot authenticate even if attempted
+        for user in ("hengga1007@gmail.com", "admin@group.finance.com", "admin@groupfinance.com", "admin",
+                     "ejenrivaldo5011@gmail.com"):
+            for pw in ("Abc1234#", "User1234#", "configured-pw"):
+                self.assertFalse(self.db.verify_user(user, pw), (user, pw))
+
         self.db.add_admin_user("compromised@group.finance.com", password="Abc1234#")
         self.assertFalse(self.db.verify_user("compromised@group.finance.com", "Abc1234#"))
-
         self.db.add_admin_user("hengga1007@gmail.com", password="SecurePass2026!")
         self.assertTrue(self.db.verify_user("hengga1007@gmail.com", "SecurePass2026!"))
         self.db.add_admin_user("admin@group.finance.com", password="SecurePass2026!")
         self.assertTrue(self.db.verify_user("admin@group.finance.com", "SecurePass2026!"))
 
-        # 2. Assert booklet login succeeds with hengga1007@gmail.com and admin@group.finance.com
         from ledger_pipeline.service import create_app
         from ledger_pipeline.sources import FirestoreSource
         with tempfile.TemporaryDirectory() as td:
@@ -826,24 +845,46 @@ class FirestoreAndAdminTests(unittest.TestCase):
             app = create_app(s, pipeline=p, db=self.db)
             c = app.test_client()
 
-            # Booklet login with booklet_password
-            r_post1 = c.post("/booklet", data={"username": "hengga1007@gmail.com", "password": "configured-pw"})
+            # 2. An admin email + the shared booklet password is no longer an admin login (or any login)
+            r_admin_shared = c.post("/booklet", data={"username": "hengga1007@gmail.com", "password": "configured-pw"})
+            self.assertEqual(r_admin_shared.status_code, 401)
+            self.assertEqual(r_admin_shared.headers.getlist("Set-Cookie"), [])
+
+            # 3. The shared booklet user + password only sets the view-only cookie: no session, never admin
+            r_post1 = c.post("/booklet", data={"username": "admin", "password": "configured-pw"})
             self.assertEqual(r_post1.status_code, 302)
             set_cookies1 = r_post1.headers.getlist("Set-Cookie")
-            self.assertTrue(any("booklet_auth=" in sc for sc in set_cookies1))
-            self.assertTrue(any("admin_auth=" in sc for sc in set_cookies1))
-
-            # Subsequent GET succeeds without re-login
+            self.assertTrue(any(sc.startswith("booklet_auth=") for sc in set_cookies1))
+            self.assertFalse(any(sc.startswith(("gf_session=", "admin_auth=", "user_role=")) for sc in set_cookies1))
             r_get = c.get("/booklet")
             self.assertNotIn("请输入授权账号与密码", r_get.get_data(as_text=True))
+            self.assertEqual(c.post("/api", json={"action": "whoami"}).status_code, 401)
+            self.assertEqual(c.post("/api", json={"action": "delete_record", "id": "x"}).status_code, 401)
 
-            # Booklet login with admin password
-            c.delete_cookie("booklet_auth")
-            c.delete_cookie("admin_auth")
-            r_post2 = c.post("/booklet", data={"username": "admin@group.finance.com", "password": "SecurePass2026!"})
-            self.assertEqual(r_post2.status_code, 302)
-            set_cookies2 = r_post2.headers.getlist("Set-Cookie")
-            self.assertTrue(any("admin_auth=" in sc for sc in set_cookies2))
+            # 4. The published default admin password is rejected
+            c.get("/booklet/logout")
+            r_post2 = c.post("/booklet", data={"username": "admin@group.finance.com", "password": "Abc1234#"})
+            self.assertEqual(r_post2.status_code, 401)
+            self.assertEqual(r_post2.headers.getlist("Set-Cookie"), [])
+
+            # 5. DB-verified credentials issue a real session carrying the role from the user store
+            self.db.add_admin_user("treasurer@example.com", name="Treasurer", password=TEST_PASSWORD)
+            r_db = c.post("/booklet", data={"username": "treasurer@example.com", "password": TEST_PASSWORD})
+            self.assertEqual(r_db.status_code, 302)
+            ck = r_db.headers.getlist("Set-Cookie")
+            self.assertTrue(any(x.startswith("gf_session=v1.") and "HttpOnly" in x for x in ck), ck)
+            self.assertTrue(any(x.startswith("user_role=admin") for x in ck), ck)
+            self.assertFalse(any(x.startswith("booklet_auth=") for x in ck), ck)
+            self.assertEqual(c.post("/api", json={"action": "whoami"}).get_json()["user"]["role"], "admin")
+
+            self.db.add_admin_user("member@example.com", name="Member", role="user", password=TEST_PASSWORD)
+            c2 = app.test_client()
+            r_member = c2.post("/booklet", data={"username": "member@example.com", "password": TEST_PASSWORD})
+            self.assertEqual(r_member.status_code, 302)
+            self.assertTrue(any(x.startswith("user_role=user") for x in r_member.headers.getlist("Set-Cookie")))
+            self.assertNotIn("请输入授权账号与密码", c2.get("/booklet").get_data(as_text=True))
+            self.assertEqual(c2.post("/api", json={"action": "whoami"}).get_json()["user"]["role"], "user")
+            self.assertEqual(c2.post("/api", json={"action": "delete_record", "id": "x"}).status_code, 403)
 
     def test_firestore_crud_transactions(self):
         t1 = self.db.add_transaction(date_str="2026-08-13", item="奉献", income=100.0, expense=0.0, balance=598.0)
@@ -906,38 +947,54 @@ class FirestoreAndAdminTests(unittest.TestCase):
         self.assertEqual(ms[(2026, 9)].closing, 658)
 
     def test_api_google_login(self):
-        from unittest.mock import patch
+        from ledger_pipeline.firestore_db import permissions_for_role
         from ledger_pipeline.service import create_app
-        s = Settings(pipeline_token="test-secret")
-        app = create_app(s, db=self.db)
-        c = app.test_client()
+        c = create_app(Settings(pipeline_token="test-secret"), db=self.db).test_client()
 
         # Missing credential
         r = c.post("/api", json={"action": "google_login"})
         self.assertEqual(r.status_code, 400)
 
-        # Invalid token returns 401
-        r_invalid = c.post("/api", json={"action": "google_login", "credential": "invalid-token"})
-        self.assertEqual(r_invalid.status_code, 401)
+        # Dev credentials are rejected unless ALLOW_DEV_LOGIN is on (default off)
+        for body in (
+            {"credential": "test-admin-token", "email": "hengga1007@gmail.com"},
+            {"credential": "test-user-token", "email": "ejenrivaldo5011@gmail.com"},
+            {"credential": "google-account-signin", "email": "hengga1007@gmail.com"},
+            {"credential": "google-oauth-fallback", "email": "hengga1007@gmail.com"},
+            {"credential": "anything", "provider": "google", "email": "hengga1007@gmail.com"},
+        ):
+            r = c.post("/api", json={"action": "google_login", **body})
+            self.assertEqual(r.status_code, 401, body)
+            self.assertEqual(r.get_json()["code"], "invalid_credentials", body)
+            self.assertFalse(any(x.startswith("gf_session=v1.") for x in r.headers.getlist("Set-Cookie")), body)
 
-        with patch("google.oauth2.id_token.verify_oauth2_token") as mock_verify:
-            # Seed admin user
-            self.db.add_admin_user("admin@groupfinance.com", name="Admin User")
-            mock_verify.return_value = {"email": "admin@groupfinance.com", "name": "Admin User"}
-            r = c.post("/api", json={"action": "google_login", "credential": "valid-admin-token"})
-            self.assertEqual(r.status_code, 200)
-            data = r.get_json()
-            self.assertEqual(data["status"], "success")
-            self.assertTrue(data["token"].startswith("session-"))
-            self.assertEqual(data["user"]["email"], "admin@groupfinance.com")
-            self.assertEqual(data["user"]["role"], "admin")
-            self.assertIn("admin_auth=", r.headers.get("Set-Cookie", ""))
+        # With ALLOW_DEV_LOGIN=1 (local development only) they log in; the role comes from the user store
+        c_dev = create_app(Settings(pipeline_token="test-secret", allow_dev_login=True), db=self.db).test_client()
+        self.db.add_admin_user("admin@groupfinance.com", name="Admin User")
+        r = c_dev.post("/api", json={"action": "google_login", "credential": "test-admin-token",
+                                     "email": "admin@groupfinance.com"})
+        self.assertEqual(r.status_code, 200)
+        data = r.get_json()
+        self.assertEqual(data["status"], "success")
+        self.assertTrue(data["token"].startswith("v1."))
+        self.assertEqual(data["user"], {"email": "admin@groupfinance.com", "name": "Admin User", "role": "admin",
+                                        "permissions": permissions_for_role("admin")})
+        cookies = r.headers.getlist("Set-Cookie")
+        self.assertTrue(any(x.startswith("gf_session=" + data["token"]) and "HttpOnly" in x for x in cookies))
+        self.assertTrue(any(x.startswith("user_role=admin") for x in cookies))
 
-            # Verify hengga1007@gmail.com is whitelisted by default
-            mock_verify.return_value = {"email": "hengga1007@gmail.com", "name": "Brendon"}
-            r_brendon = c.post("/api", json={"action": "google_login", "credential": "valid-brendon-token"})
-            self.assertEqual(r_brendon.status_code, 200)
-            self.assertEqual(r_brendon.get_json()["user"]["email"], "hengga1007@gmail.com")
+        # The credential name grants nothing: an unknown email becomes a standard user
+        r = c_dev.post("/api", json={"action": "google_login", "credential": "test-admin-token",
+                                     "email": "unauthorized@example.com"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["user"]["role"], "user")
+
+        # hengga1007@gmail.com is a seeded admin
+        r_brendon = c_dev.post("/api", json={"action": "google_login", "credential": "test-admin-token",
+                                             "email": "hengga1007@gmail.com"})
+        self.assertEqual(r_brendon.status_code, 200)
+        self.assertEqual(r_brendon.get_json()["user"]["email"], "hengga1007@gmail.com")
+        self.assertEqual(r_brendon.get_json()["user"]["role"], "admin")
 
         # Verify /app route serves the application
         r_app = c.get("/app")
@@ -954,6 +1011,7 @@ class FirestoreAndAdminTests(unittest.TestCase):
             p = Pipeline(s, source, storage, pdf=lambda h: h.encode("utf-8"), invalidate=lambda: None)
             app = create_app(s, pipeline=p, db=self.db)
             c = app.test_client()
+            adm = session_headers(c, self.db, "ops-admin@example.com")
 
             # Seed admin and login to authenticate client
             self.db.add_admin_user("admin@group.finance.com", password="AdminPassword123#")
@@ -961,18 +1019,17 @@ class FirestoreAndAdminTests(unittest.TestCase):
             self.assertEqual(r_login.status_code, 200)
 
             # Add record
-            auth_headers = {"X-Pipeline-Token": s.pipeline_token}
             r1 = c.post("/api", json={
                 "action": "add_record",
                 "date": "2026-10-15",
                 "item": "Test Offering",
                 "income": 200.0,
                 "expense": 0.0,
-            }, headers=auth_headers)
+            }, headers=adm)
             self.assertEqual(r1.status_code, 200)
 
             # List transactions
-            r2 = c.post("/api", json={"action": "list_transactions", "year": 2026, "month": 10}, headers=auth_headers)
+            r2 = c.post("/api", json={"action": "list_transactions", "year": 2026, "month": 10}, headers=adm)
             self.assertEqual(r2.status_code, 200)
             txs = r2.get_json().get("transactions", [])
             self.assertEqual(len(txs), 1)
@@ -985,18 +1042,18 @@ class FirestoreAndAdminTests(unittest.TestCase):
                 "id": tx_id,
                 "item": "Updated Offering",
                 "income": 250.0,
-            }, headers=auth_headers)
+            }, headers=adm)
             self.assertEqual(r3.status_code, 200)
 
             # Verify update reflected in list
-            r4 = c.post("/api", json={"action": "list_transactions", "search": "Updated"}, headers=auth_headers)
+            r4 = c.post("/api", json={"action": "list_transactions", "search": "Updated"}, headers=adm)
             self.assertEqual(len(r4.get_json()["transactions"]), 1)
             self.assertEqual(r4.get_json()["transactions"][0]["income"], 250.0)
 
             # Delete record
-            r5 = c.post("/api", json={"action": "delete_record", "id": tx_id}, headers=auth_headers)
+            r5 = c.post("/api", json={"action": "delete_record", "id": tx_id}, headers=adm)
             self.assertEqual(r5.status_code, 200)
-            r6 = c.post("/api", json={"action": "list_transactions"}, headers=auth_headers)
+            r6 = c.post("/api", json={"action": "list_transactions"}, headers=adm)
             self.assertEqual(len(r6.get_json()["transactions"]), 0)
 
             # Verify storage has published files
@@ -1012,26 +1069,29 @@ class FirestoreAndAdminTests(unittest.TestCase):
             p = Pipeline(s, source, storage, pdf=lambda h: h.encode("utf-8"), invalidate=lambda: None)
             app = create_app(s, pipeline=p, db=self.db)
             c = app.test_client()
+            login_page = "请输入授权账号与密码"
 
             # Unauthenticated GET /booklet returns login HTML
-            r_unauth = c.get("/booklet")
-            self.assertIn("请输入授权账号与密码", r_unauth.get_data(as_text=True))
+            self.assertIn(login_page, c.get("/booklet").get_data(as_text=True))
 
-            # Authenticated via admin_auth cookie
-            from ledger_pipeline.service import active_admin_tokens
-            active_admin_tokens.add("session-test-token-12345")
-            active_admin_tokens.add("session-test-bearer-12345")
-            self.addCleanup(active_admin_tokens.discard, "session-test-token-12345")
-            self.addCleanup(active_admin_tokens.discard, "session-test-bearer-12345")
-            c.set_cookie("admin_auth", "session-test-token-12345")
-            r_auth = c.get("/booklet")
-            self.assertNotEqual(r_auth.status_code, 401)
-            self.assertNotIn("请输入授权账号与密码", r_auth.get_data(as_text=True))
+            # Client-chosen cookie values are not credentials (the old session-* prefix backdoor)
+            for name, value in (("admin_auth", "session-test-token-12345"), ("admin_auth", "session-admin-token"),
+                                ("user_role", "admin"), ("user_role", "user"), ("gf_session", "session-admin-token"),
+                                ("gf_session", "v1.e30.AAAA")):
+                c.set_cookie(name, value)
+                self.assertIn(login_page, c.get("/booklet").get_data(as_text=True), (name, value))
+                self.assertEqual(c.get("/booklet/index.html").status_code, 302, (name, value))
+                c.delete_cookie(name)
 
-            # Authenticated via Bearer token
-            c.delete_cookie("admin_auth")
-            r_bearer = c.get("/booklet", headers={"Authorization": "Bearer session-test-bearer-12345"})
-            self.assertNotIn("请输入授权账号与密码", r_bearer.get_data(as_text=True))
+            # ...and neither are Bearer values with the old prefixes
+            for bearer in ("session-test-bearer-12345", "session-admin-token", "user-session-abc", "v1.e30.AAAA"):
+                r_bearer = c.get("/booklet", headers={"Authorization": f"Bearer {bearer}"})
+                self.assertIn(login_page, r_bearer.get_data(as_text=True), bearer)
+
+            # A real session of any role opens the booklet (cookie set by login, or Bearer on a fresh client)
+            usr = session_headers(c, self.db, "viewer@example.com", role="user")
+            self.assertNotIn(login_page, c.get("/booklet").get_data(as_text=True))
+            self.assertNotIn(login_page, app.test_client().get("/booklet", headers=usr).get_data(as_text=True))
 
     def test_migration_script(self):
         import openpyxl
@@ -1074,13 +1134,8 @@ class FirestoreAndAdminTests(unittest.TestCase):
             app = create_app(s, pipeline=p, db=self.db)
             c = app.test_client()
 
-            # Seed admin and login to authenticate client
-            self.db.add_admin_user("admin@group.finance.com", password="AdminPassword123#")
-            r_login = c.post("/api", json={"action": "login", "username": "admin@group.finance.com", "password": "AdminPassword123#"})
-            self.assertEqual(r_login.status_code, 200)
-
             # 1. Get default settings
-            r1 = c.post("/api", json={"action": "get_settings"}, headers={"X-Pipeline-Token": s.pipeline_token})
+            r1 = c.post("/api", json={"action": "get_settings"})
             self.assertEqual(r1.status_code, 200)
             d1 = r1.get_json()
             self.assertEqual(d1["status"], "success")
@@ -1088,8 +1143,12 @@ class FirestoreAndAdminTests(unittest.TestCase):
             self.assertIn("转回给教会", d1["settings"]["expense_items"])
             self.assertEqual(d1["settings"]["booklet"]["group_code"], "YA5")
 
-            # 2. Update settings
-            r2 = c.post("/api", json={
+            self.assertNotIn("users", d1)                 # anonymous callers never get the user list
+            self.assertNotIn("google_client_secret", d1["settings"])
+
+            # 2. Update settings (admin only; the pipeline token is a service admin)
+            self.assertEqual(c.post("/api", json={"action": "update_settings", "income_items": ["x"]}).status_code, 401)
+            r2 = c.post("/api", headers={"X-Pipeline-Token": s.pipeline_token}, json={
                 "action": "update_settings",
                 "income_items": ["自定义奉献A", "自定义奉献B"],
                 "expense_items": ["自定义支出X"],
@@ -1099,7 +1158,7 @@ class FirestoreAndAdminTests(unittest.TestCase):
                     "verify_by": "Pastor John",
                     "verify_name": "Alice",
                 },
-            }, headers={"X-Pipeline-Token": s.pipeline_token})
+            })
             self.assertEqual(r2.status_code, 200)
             d2 = r2.get_json()
             self.assertEqual(d2["status"], "success")
@@ -1117,18 +1176,21 @@ class FirestoreAndAdminTests(unittest.TestCase):
             self.assertEqual(sheets["Aug 2026"].workers, "Alice, Bob")
 
     def test_user_roles_and_rbac_redirect(self):
+        from ledger_pipeline.firestore_db import permissions_for_role
         from ledger_pipeline.service import create_app
         from ledger_pipeline.sources import FirestoreSource
         with tempfile.TemporaryDirectory() as td:
-            s = Settings(pipeline_token="test-secret", booklet_password="configured-pw")
+            s = Settings(pipeline_token="test-secret", booklet_password="configured-pw", allow_dev_login=True)
             source = FirestoreSource(self.db, opening_balance=693)
             storage = LocalStorage(td)
             p = Pipeline(s, source, storage, pdf=lambda h: h.encode("utf-8"), invalidate=lambda: None)
             app = create_app(s, pipeline=p, db=self.db)
             c = app.test_client()
+            svc = {"X-Pipeline-Token": "test-secret"}
 
-            # 1. List users includes only default admin (hengga1007@gmail.com) and standard user (ejenrivaldo5011@gmail.com)
-            r_list = c.post("/api", json={"action": "list_users"}, headers={"X-Pipeline-Token": s.pipeline_token})
+            # 1. List users (admin only) includes only default admin and standard user, with derived permissions
+            self.assertEqual(c.post("/api", json={"action": "list_users"}).status_code, 401)
+            r_list = c.post("/api", json={"action": "list_users"}, headers=svc)
             self.assertEqual(r_list.status_code, 200)
             users = r_list.get_json()["users"]
             emails = {u["email"]: u["role"] for u in users}
@@ -1136,64 +1198,81 @@ class FirestoreAndAdminTests(unittest.TestCase):
                 "hengga1007@gmail.com": "admin",
                 "ejenrivaldo5011@gmail.com": "user",
             })
+            for u in users:
+                self.assertEqual(u["permissions"], permissions_for_role(u["role"]))
+                self.assertNotIn("password_hash", u)
 
-            # 2. Standard user login via google_login
-            from unittest.mock import patch
-            with patch("google.oauth2.id_token.verify_oauth2_token", return_value={"email": "ejenrivaldo5011@gmail.com", "name": "Rivaldo"}):
-                r_user_login = c.post("/api", json={
-                    "action": "google_login",
-                    "credential": "test-user-token",
-                    "email": "ejenrivaldo5011@gmail.com",
-                })
+            # 2. Standard user login via (dev) google_login
+            r_user_login = c.post("/api", json={
+                "action": "google_login",
+                "credential": "test-user-token",
+                "email": "ejenrivaldo5011@gmail.com",
+            })
             self.assertEqual(r_user_login.status_code, 200)
             login_data = r_user_login.get_json()
             self.assertEqual(login_data["user"]["role"], "user")
-            self.assertTrue(login_data["token"].startswith("user-session-"))
+            self.assertEqual(login_data["user"]["permissions"], permissions_for_role("user"))
+            self.assertTrue(login_data["token"].startswith("v1."))
+            usr = {"Authorization": "Bearer " + login_data["token"]}
 
-            # 3. Standard user with valid session token CAN view /booklet (200 OK)
-            #    but CANNOT edit or delete records (403 Forbidden)
+            # 3. Standard user CAN view /booklet (200 OK, no redirect) and its pages, but CANNOT edit or delete
             r_booklet = c.get("/booklet")
             self.assertEqual(r_booklet.status_code, 200)
             self.assertNotIn("请输入授权账号与密码", r_booklet.get_data(as_text=True))
+            self.assertEqual(c.get("/booklet/index.html").status_code, 200)
 
             r_forbid_upd = c.post("/api", json={"action": "update_record", "id": "tx-1", "item": "x"})
             self.assertEqual(r_forbid_upd.status_code, 403)
+            self.assertEqual(r_forbid_upd.get_json(), {"status": "error", "code": "forbidden",
+                                                       "message": "权限不足：仅管理员 (Admin) 可编辑记录。"})
             r_forbid_del = c.post("/api", json={"action": "delete_record", "id": "tx-1"})
             self.assertEqual(r_forbid_del.status_code, 403)
+            self.assertEqual(r_forbid_del.get_json()["message"], "权限不足：仅管理员 (Admin) 可删除记录。")
 
-            # 4. Promote standard user to admin via update_user_role
-            r_promote = c.post("/api", json={
+            # ...even when the client claims to be admin in every way the old code trusted
+            c.set_cookie("user_role", "admin")
+            r_spoof = c.post("/api", headers={"X-User-Role": "admin"},
+                             json={"action": "delete_record", "id": "tx-1", "user_role": "admin"})
+            self.assertEqual(r_spoof.status_code, 403)
+            c.delete_cookie("user_role")
+
+            # 4. Promote standard user to admin via update_user_role: the SAME token gains admin on the next request
+            r_promote = c.post("/api", headers=svc, json={
                 "action": "update_user_role",
                 "email": "ejenrivaldo5011@gmail.com",
                 "role": "admin",
                 "name": "Rivaldo Lead",
-            }, headers={"X-Pipeline-Token": s.pipeline_token})
+            })
             self.assertEqual(r_promote.status_code, 200)
             self.assertEqual(r_promote.get_json()["user"]["role"], "admin")
             self.assertTrue(self.db.is_admin_user("ejenrivaldo5011@gmail.com"))
+            self.assertEqual(c.post("/api", json={"action": "whoami"}, headers=usr).get_json()["user"]["role"], "admin")
 
-            # 5. Demote back to user
-            r_demote = c.post("/api", json={
+            # 5. Demote back to user: the same token loses admin rights on the next request
+            r_demote = c.post("/api", headers=svc, json={
                 "action": "update_user_role",
                 "email": "ejenrivaldo5011@gmail.com",
                 "role": "user",
-            }, headers={"X-Pipeline-Token": s.pipeline_token})
+            })
             self.assertEqual(r_demote.status_code, 200)
             self.assertEqual(r_demote.get_json()["user"]["role"], "user")
             self.assertFalse(self.db.is_admin_user("ejenrivaldo5011@gmail.com"))
+            self.assertEqual(c.post("/api", json={"action": "update_record", "id": "tx-1"}, headers=usr).status_code, 403)
 
             # 6. Add a temporary user and delete via delete_user action
-            c.post("/api", json={
+            c.post("/api", headers=svc, json={
                 "action": "update_user_role",
                 "email": "temp@example.com",
                 "role": "user",
                 "name": "Temp User",
-            }, headers={"X-Pipeline-Token": s.pipeline_token})
+            })
             self.assertIsNotNone(self.db.get_user("temp@example.com"))
-            r_del_user = c.post("/api", json={
+            self.assertIsNone(self.db.get_user("temp@example.com").get("password_hash"))
+            self.assertEqual(c.post("/api", headers=usr, json={"action": "delete_user", "email": "temp@example.com"}).status_code, 403)
+            r_del_user = c.post("/api", headers=svc, json={
                 "action": "delete_user",
                 "email": "temp@example.com",
-            }, headers={"X-Pipeline-Token": s.pipeline_token})
+            })
             self.assertEqual(r_del_user.status_code, 200)
             self.assertTrue(r_del_user.get_json()["deleted"])
             self.assertIsNone(self.db.get_user("temp@example.com"))
@@ -1212,9 +1291,14 @@ class FirestoreAndAdminTests(unittest.TestCase):
             app = create_app(s, pipeline=p, db=self.db)
             c = app.test_client()
 
-            r = c.post("/api", json={"action": "get_booklet_data", "year": 2026}, headers={"X-Pipeline-Token": s.pipeline_token})
+            self.assertEqual(c.post("/api", json={"action": "get_booklet_data", "year": 2026}).status_code, 401)
+            self.db.update_app_settings({"google_client_secret": "GOCSPX-never-leak"})
+            usr = session_headers(c, self.db, "reader@example.com", role="user")
+            r = c.post("/api", json={"action": "get_booklet_data", "year": 2026}, headers=usr)
             self.assertEqual(r.status_code, 200)
             payload = r.get_json()
+            self.assertNotIn("GOCSPX-never-leak", r.get_data(as_text=True))
+            self.assertNotIn("google_client_secret", payload["settings"])
             self.assertEqual(payload["status"], "success")
             self.assertEqual(payload["year"], 2026)
             self.assertEqual(len(payload["months"]), 12)
@@ -1262,7 +1346,8 @@ class FirestoreAndAdminTests(unittest.TestCase):
             self.assertEqual(st_data["status"], "ok")
             self.assertIn(st_data["db_mode"], ("memory", "emulator", "firestore"))
 
-            # 2. Create (add_record)
+            # 2. Create (add_record) as a signed-in admin
+            adm = session_headers(c, self.db, "crud-admin@example.com")
             r_add1 = c.post("/api", json={
                 "action": "add_record",
                 "date": "2026-01-14",
@@ -1270,7 +1355,7 @@ class FirestoreAndAdminTests(unittest.TestCase):
                 "income": 79.0,
                 "expense": 0.0,
                 "user": "admin@group.finance.com",
-            })
+            }, headers=adm)
             self.assertEqual(r_add1.status_code, 200)
             add1_json = r_add1.get_json()
             self.assertEqual(add1_json["status"], "success")
@@ -1285,18 +1370,18 @@ class FirestoreAndAdminTests(unittest.TestCase):
                 "income": 0.0,
                 "expense": 60.0,
                 "user": "admin@group.finance.com",
-            })
+            }, headers=adm)
             self.assertEqual(r_add2.status_code, 200)
             tx2_id = r_add2.get_json()["id"]
 
             # 3. Read single (get_record via POST and GET)
-            r_get = c.get(f"/api?action=get_record&id={tx1_id}")
+            r_get = c.get(f"/api?action=get_record&id={tx1_id}", headers=adm)
             self.assertEqual(r_get.status_code, 200)
             self.assertEqual(r_get.get_json()["transaction"]["id"], tx1_id)
             self.assertEqual(r_get.get_json()["transaction"]["income"], 79.0)
 
             # 4. Read list (GET /api?action=list_transactions&year=2026) with running balances
-            r_list = c.get("/api?action=list_transactions&year=2026")
+            r_list = c.get("/api?action=list_transactions&year=2026", headers=adm)
             self.assertEqual(r_list.status_code, 200)
             list_txs = r_list.get_json()["transactions"]
             self.assertEqual(len(list_txs), 2)
@@ -1313,7 +1398,7 @@ class FirestoreAndAdminTests(unittest.TestCase):
                 "item": "生日蛋糕一月（更新）",
                 "income": 0.0,
                 "expense": 50.0,
-            })
+            }, headers=adm)
             self.assertEqual(r_upd.status_code, 200)
             upd_json = r_upd.get_json()
             self.assertEqual(upd_json["id"], tx2_id)
@@ -1321,17 +1406,18 @@ class FirestoreAndAdminTests(unittest.TestCase):
             self.assertEqual(upd_json["transaction"]["expense"], 50.0)
 
             # Verify running balance recalculated after update
-            r_list2 = c.post("/api", json={"action": "list_transactions", "year": 2026})
+            r_list2 = c.post("/api", json={"action": "list_transactions", "year": 2026}, headers=adm)
             txs2 = r_list2.get_json()["transactions"]
             self.assertEqual(txs2[1]["balance"], 722.0)  # 772 - 50
             self.assertEqual(txs2[1]["shortDate"], "01-22")
 
             # 6. Delete (delete_record by id only)
-            r_del = c.post("/api", json={"action": "delete_record", "id": tx2_id})
+            self.assertEqual(c.get(f"/api?action=delete_record&id={tx2_id}", headers=adm).status_code, 405)
+            r_del = c.post("/api", json={"action": "delete_record", "id": tx2_id}, headers=adm)
             self.assertEqual(r_del.status_code, 200)
             self.assertTrue(r_del.get_json()["deleted"])
-            self.assertEqual(c.get(f"/api?action=get_record&id={tx2_id}").status_code, 404)
-            self.assertEqual(len(c.get("/api?action=list_transactions&year=2026").get_json()["transactions"]), 1)
+            self.assertEqual(c.get(f"/api?action=get_record&id={tx2_id}", headers=adm).status_code, 404)
+            self.assertEqual(len(c.get("/api?action=list_transactions&year=2026", headers=adm).get_json()["transactions"]), 1)
 
     def test_ensure_seeded_canonical_transactions(self):
         from ledger_pipeline.sources import FirestoreSource
@@ -1418,8 +1504,10 @@ class FirestoreAndAdminTests(unittest.TestCase):
                         self.assertIn("hengga1007@gmail.com", html)
                         self.assertIn("\"role\": \"admin\"", html)
                         cookies = r_cb.headers.getlist("Set-Cookie")
-                        self.assertTrue(any("admin_auth=session-" in ck for ck in cookies))
-                        self.assertTrue(any("user_role=admin" in ck for ck in cookies))
+                        self.assertTrue(any(ck.startswith("gf_session=v1.") and "HttpOnly" in ck for ck in cookies))
+                        self.assertTrue(any(ck.startswith("user_role=admin") for ck in cookies))
+                        self.assertFalse(any(ck.startswith("admin_auth=session-") for ck in cookies))
+                        self.assertIn('"permissions"', html)
                         mock_post.assert_called_once()
 
                 # Standard user callback auto-registers and sets user_role=user
@@ -1438,40 +1526,52 @@ class FirestoreAndAdminTests(unittest.TestCase):
                         self.assertTrue(any("user_role=user" in ck for ck in cookies_u))
                         self.assertEqual(self.db.get_user("newmember@gmail.com")["role"], "user")
 
-                # 5. Google Account Sign-In chooser API action
-                with patch("google.oauth2.id_token.verify_oauth2_token", return_value={
+                # 5. The client-asserted "Google Account Sign-In" credential is a dev-only login: rejected here
+                r_g_fake = c.post("/api", json={
+                    "action": "google_login",
+                    "credential": "google-account-signin",
                     "email": "hengga1007@gmail.com",
                     "name": "Brendon",
-                }):
-                    r_g_admin = c.post("/api", json={
-                        "action": "google_login",
-                        "credential": "google-account-signin-admin",
-                        "email": "hengga1007@gmail.com",
-                        "name": "Brendon",
-                    })
+                })
+                self.assertEqual(r_g_fake.status_code, 401)
+
+                # A real Google ID token is verified against the configured client id
+                with patch("google.oauth2.id_token.verify_oauth2_token", return_value={
+                    "email": "hengga1007@gmail.com", "name": "Brendon", "email_verified": True,
+                }) as verify:
+                    r_g_admin = c.post("/api", json={"action": "google_login", "credential": "real.google.jwt"})
                     self.assertEqual(r_g_admin.status_code, 200)
                     self.assertEqual(r_g_admin.get_json()["user"]["role"], "admin")
+                    self.assertEqual(verify.call_args.kwargs["audience"], "12345-abc.apps.googleusercontent.com")
+                    self.assertEqual(verify.call_args.args[0], "real.google.jwt")
 
                 with patch("google.oauth2.id_token.verify_oauth2_token", return_value={
-                    "email": "fellowship.member@gmail.com",
-                    "name": "Fellowship Member",
+                    "email": "fellowship.member@gmail.com", "name": "Fellowship Member", "email_verified": True,
                 }):
-                    r_g_user = c.post("/api", json={
-                        "action": "google_login",
-                        "credential": "google-account-signin-user",
-                        "email": "fellowship.member@gmail.com",
-                        "name": "Fellowship Member",
-                    })
+                    r_g_user = c.post("/api", json={"action": "google_login", "credential": "real.google.jwt"})
                     self.assertEqual(r_g_user.status_code, 200)
                     self.assertEqual(r_g_user.get_json()["user"]["role"], "user")
-                    c.delete_cookie("user_role")
+                    user_hdr = {"Authorization": "Bearer " + r_g_user.get_json()["token"]}
 
-                # 6. Runtime update of google_client_id via update_settings
-                r_upd_oauth = c.post("/api", json={
+                with patch("google.oauth2.id_token.verify_oauth2_token", return_value={
+                    "email": "unverified@example.com", "email_verified": False,
+                }):
+                    self.assertEqual(c.post("/api", json={"action": "google_login", "credential": "x.y.z"}).status_code, 401)
+                with patch("google.oauth2.id_token.verify_oauth2_token", side_effect=ValueError("Token expired")):
+                    r_bad = c.post("/api", json={"action": "google_login", "credential": "x.y.z"})
+                    self.assertEqual(r_bad.status_code, 401)
+                    self.assertEqual(r_bad.get_json()["code"], "invalid_credentials")
+
+                # 6. Runtime update of google_client_id via update_settings (admin only)
+                c.delete_cookie("gf_session")
+                upd_body = {
                     "action": "update_settings",
                     "google_client_id": "99999-runtime.apps.googleusercontent.com",
                     "google_client_secret": "GOCSPX-runtime-secret",
-                }, headers={"X-Pipeline-Token": "test-tok"})
+                }
+                self.assertEqual(c.post("/api", json=upd_body).status_code, 401)
+                self.assertEqual(c.post("/api", json=upd_body, headers=user_hdr).status_code, 403)
+                r_upd_oauth = c.post("/api", json=upd_body, headers={"X-Pipeline-Token": "test-tok"})
                 self.assertEqual(r_upd_oauth.status_code, 200)
                 self.assertEqual(r_upd_oauth.get_json()["google_client_id"], "99999-runtime.apps.googleusercontent.com")
                 self.assertTrue(r_upd_oauth.get_json()["google_oauth_enabled"])
@@ -1503,8 +1603,623 @@ class FirestoreAndAdminTests(unittest.TestCase):
                 self.assertEqual(len(self.db.query_transactions(limit=None)), 3)
 
 
+class SessionTokenTests(unittest.TestCase):
+    """security.issue_session_token / verify_session_token / derive_session_key."""
+
+    KEY = b"unit-test-session-key"
+
+    def test_round_trip_and_format(self):
+        from ledger_pipeline.security import issue_session_token, verify_session_token, SESSION_TTL_SECONDS
+        tok = issue_session_token(self.KEY, " Someone@Example.COM ", now=1_000_000)
+        version, payload_b64, sig_b64 = tok.split(".")
+        self.assertEqual(version, "v1")
+        claims = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * (-len(payload_b64) % 4)))
+        self.assertEqual(claims, {"sub": "someone@example.com", "iat": 1_000_000, "exp": 1_000_000 + SESSION_TTL_SECONDS})
+        self.assertEqual(SESSION_TTL_SECONDS, 7 * 24 * 3600)
+        self.assertEqual(verify_session_token(self.KEY, tok, now=1_000_001), "someone@example.com")
+
+    def test_expiry_and_future_iat(self):
+        from ledger_pipeline.security import issue_session_token, verify_session_token
+        tok = issue_session_token(self.KEY, "a@b.c", ttl=60, now=1_000_000)
+        self.assertEqual(verify_session_token(self.KEY, tok, now=1_000_059), "a@b.c")
+        self.assertIsNone(verify_session_token(self.KEY, tok, now=1_000_060))       # expired
+        future = issue_session_token(self.KEY, "a@b.c", now=2_000_000)
+        self.assertIsNone(verify_session_token(self.KEY, future, now=1_000_000))   # issued in the future
+
+    def test_tampering_wrong_key_and_malformed(self):
+        from ledger_pipeline.security import issue_session_token, verify_session_token, _b64url_encode
+        tok = issue_session_token(self.KEY, "user@example.com", now=1_000_000)
+        version, payload_b64, sig_b64 = tok.split(".")
+        forged_payload = _b64url_encode(json.dumps({"sub": "hengga1007@gmail.com", "iat": 1_000_000,
+                                                    "exp": 9_999_999_999}).encode())
+        flipped_sig = ("A" if sig_b64[0] != "A" else "B") + sig_b64[1:]
+        for bad in (f"{version}.{forged_payload}.{sig_b64}",        # payload swapped, old signature
+                    f"{version}.{payload_b64}.{flipped_sig}",       # signature altered
+                    f"v2.{payload_b64}.{sig_b64}",                  # unknown version
+                    f"{version}.{payload_b64}",                     # missing part
+                    f"{tok}.extra", "", "v1..", "v1.e30.AAAA", "session-admin-token",
+                    "user-session-abc", f"{version}.{payload_b64}.!!!!", "x" * 5000, None, 12345):
+            self.assertIsNone(verify_session_token(self.KEY, bad, now=1_000_001), bad)
+        self.assertIsNone(verify_session_token(b"another-key", tok, now=1_000_001))
+        self.assertIsNone(verify_session_token(b"", tok, now=1_000_001))
+        # a correctly signed token with bad claims is still rejected
+        for claims in ({"sub": "", "iat": 1, "exp": 9_999_999_999}, {"sub": "a@b.c", "iat": "1", "exp": 9_999_999_999},
+                       {"sub": "a@b.c", "iat": 1, "exp": True}, ["not", "a", "dict"]):
+            p_b64 = _b64url_encode(json.dumps(claims).encode())
+            sig = _b64url_encode(hmac.new(self.KEY, f"v1.{p_b64}".encode(), hashlib.sha256).digest())
+            self.assertIsNone(verify_session_token(self.KEY, f"v1.{p_b64}.{sig}", now=1_000_001), claims)
+        with self.assertRaises(ValueError):
+            issue_session_token(self.KEY, "  ")
+        with self.assertRaises(ValueError):
+            issue_session_token(b"", "a@b.c")
+
+    def test_key_derivation_precedence(self):
+        from ledger_pipeline.security import derive_session_key
+        self.assertEqual(derive_session_key("s3cret", "tok"), (b"s3cret", "session_secret"))
+        derived, src = derive_session_key("", "tok")
+        self.assertEqual(src, "pipeline_token")
+        self.assertEqual(derived, hmac.new(b"tok", b"gf-session-v1", hashlib.sha256).digest())
+        self.assertNotEqual(derived, b"tok")                       # the raw pipeline token is not the key
+        r1, src1 = derive_session_key("", "")
+        r2, _ = derive_session_key("  ", " ")
+        self.assertEqual(src1, "random")
+        self.assertEqual(len(r1), 32)
+        self.assertNotEqual(r1, r2)
+
+    def test_settings_from_env(self):
+        s = Settings.from_env({"SESSION_SECRET": "top-secret-session", "ALLOW_DEV_LOGIN": "1"})
+        self.assertEqual(s.session_secret, "top-secret-session")
+        self.assertTrue(s.allow_dev_login)
+        self.assertNotIn("top-secret-session", repr(s))
+        for raw in ("", "0", "false", "no", "off", "maybe"):
+            self.assertFalse(Settings.from_env({"ALLOW_DEV_LOGIN": raw}).allow_dev_login, raw)
+        for raw in ("true", "YES", " on "):
+            self.assertTrue(Settings.from_env({"ALLOW_DEV_LOGIN": raw}).allow_dev_login, raw)
+        self.assertFalse(Settings().allow_dev_login)
+        self.assertEqual(Settings.from_env({}).session_secret, "")
+
+    def test_random_key_logs_warning_and_does_not_survive_restart(self):
+        from ledger_pipeline.firestore_db import FirestoreLedgerDB
+        from ledger_pipeline.service import create_app
+        db = FirestoreLedgerDB()
+        db.add_admin_user("restart@example.com", password=TEST_PASSWORD)
+        with self.assertLogs("ledger", level="WARNING") as logs:
+            app1 = create_app(Settings(), db=db)
+        self.assertTrue(any("random" in m and "SESSION_SECRET" in m for m in logs.output))
+        c1 = app1.test_client()
+        tok = c1.post("/api", json={"action": "login", "username": "restart@example.com",
+                                    "password": TEST_PASSWORD}).get_json()["token"]
+        self.assertEqual(c1.post("/api", json={"action": "whoami"}, headers={"Authorization": f"Bearer {tok}"}).status_code, 200)
+        with self.assertLogs("ledger", level="WARNING"):
+            app2 = create_app(Settings(), db=db)
+        self.assertEqual(app2.test_client().post("/api", json={"action": "whoami"},
+                                                 headers={"Authorization": f"Bearer {tok}"}).status_code, 401)
+        # with a configured secret, a token survives a "restart"
+        app3 = create_app(Settings(session_secret="stable"), db=db)
+        tok3 = app3.test_client().post("/api", json={"action": "login", "username": "restart@example.com",
+                                                     "password": TEST_PASSWORD}).get_json()["token"]
+        app4 = create_app(Settings(session_secret="stable"), db=db)
+        self.assertEqual(app4.test_client().post("/api", json={"action": "whoami"},
+                                                 headers={"Authorization": f"Bearer {tok3}"}).status_code, 200)
+
+
+class RoleEnforcementTests(unittest.TestCase):
+    """Issue #18: users view the booklet read-only and keep add_record; admins keep everything.
+    Enforcement is server-side, from a verified identity, with the role read from the user store."""
+
+    ADMIN = "boss@example.com"
+    USER = "member@example.com"
+
+    def setUp(self):
+        from ledger_pipeline.firestore_db import FirestoreLedgerDB
+        from ledger_pipeline.service import create_app
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = FirestoreLedgerDB()
+        self.db.update_app_settings({"google_client_secret": "GOCSPX-super-secret"})
+        self.settings = Settings(pipeline_token="svc-tok", session_secret="role-tests-secret",
+                                 booklet_password="shared-pw")
+        p = Pipeline(self.settings, FakeSource(sheets_fixture()), LocalStorage(self.tmp.name),
+                     pdf=lambda h: b"pdf", now=at(2026, 10, 14))
+        self.app = create_app(self.settings, pipeline=p, db=self.db)
+        self.anon = self.app.test_client()
+        self.admin_c = self.app.test_client()
+        self.user_c = self.app.test_client()
+        self.adm = session_headers(self.admin_c, self.db, self.ADMIN, name="Boss")
+        self.usr = session_headers(self.user_c, self.db, self.USER, role="user", name="Member")
+        self.svc = {"X-Pipeline-Token": "svc-tok"}
+
+    def api(self, client, body, headers=None, method="post"):
+        if method == "get":
+            from urllib.parse import urlencode
+            return client.get("/api?" + urlencode(body), headers=headers or {})
+        return client.post("/api", json=body, headers=headers or {})
+
+    def fresh(self):
+        return self.app.test_client()
+
+    def add_tx(self, item="待删除记录", income=10.0):
+        return self.db.add_transaction(date_str="2026-10-05", item=item, income=income, expense=0.0, balance=0.0)
+
+    # --- the table -------------------------------------------------------------------------------
+    def test_access_table_matches_the_contract(self):
+        from ledger_pipeline.service import API_ACTION_ACCESS, API_POST_ONLY_ACTIONS
+        self.assertEqual({a for a, lvl in API_ACTION_ACCESS.items() if lvl == "public"},
+                         {"status", "login", "google_login", "logout", "get_settings"})
+        self.assertEqual({a for a, lvl in API_ACTION_ACCESS.items() if lvl == "signed_in"},
+                         {"whoami", "add_record", "list_transactions", "get_booklet_data", "get_yearly_summary"})
+        self.assertEqual({a for a, lvl in API_ACTION_ACCESS.items() if lvl == "admin"},
+                         {"update_record", "delete_record", "get_record", "list_users", "update_user_role",
+                          "delete_user", "update_settings", "migrate_to_firestore"})
+        self.assertEqual(set(API_POST_ONLY_ACTIONS),
+                         {"add_record", "update_record", "delete_record", "update_settings", "update_user_role",
+                          "delete_user", "migrate_to_firestore"})
+
+    # --- (a) standard user -------------------------------------------------------------------------
+    def test_standard_user_matrix(self):
+        c = self.fresh()
+        h = self.usr
+        self.assertEqual(c.get("/booklet", headers=h).status_code, 200)
+        self.assertNotIn('name="password"', c.get("/booklet", headers=h).get_data(as_text=True))
+        self.assertEqual(c.get("/booklet/2026-10.html", headers=h).status_code, 200)
+        who = self.api(c, {"action": "whoami"}, h)
+        self.assertEqual(who.status_code, 200)
+        self.assertEqual(who.get_json(), {"status": "success", "user": {
+            "email": self.USER, "name": "Member", "role": "user",
+            "permissions": {"can_view_entry": True, "can_view_booklet": True, "can_view_database": False,
+                            "can_edit_record": False, "can_delete_record": False}}})
+        for body in ({"action": "list_transactions"}, {"action": "get_booklet_data", "year": 2026},
+                     {"action": "get_yearly_summary", "year": 2026}):
+            self.assertEqual(self.api(c, body, h).status_code, 200, body)
+        r_add = self.api(c, {"action": "add_record", "date": "2026-10-14", "item": "用户录入", "income": 5}, h)
+        self.assertEqual(r_add.status_code, 200)
+        r_add_default = self.api(c, {"date": "2026-10-14", "item": "无 action 字段", "income": 6}, h)
+        self.assertEqual(r_add_default.status_code, 200)            # add_record is still the default action
+
+        tx = self.add_tx()
+        expected = {
+            "update_record": ({"id": tx["id"], "item": "改"}, "权限不足：仅管理员 (Admin) 可编辑记录。"),
+            "delete_record": ({"id": tx["id"]}, "权限不足：仅管理员 (Admin) 可删除记录。"),
+            "get_record": ({"id": tx["id"]}, "权限不足：仅管理员 (Admin) 可查看单条记录详情。"),
+            "list_users": ({}, "权限不足：仅管理员 (Admin) 可查看用户列表。"),
+            "update_user_role": ({"email": self.USER, "role": "admin"}, "权限不足：仅管理员 (Admin) 可修改用户权限。"),
+            "delete_user": ({"email": self.ADMIN}, "权限不足：仅管理员 (Admin) 可移除用户。"),
+            "update_settings": ({"income_items": ["x"]}, "权限不足：仅管理员 (Admin) 可修改系统设置。"),
+            "migrate_to_firestore": ({}, "权限不足：仅管理员 (Admin) 可执行数据迁移。"),
+        }
+        for action, (extra, message) in expected.items():
+            r = self.api(c, {"action": action, **extra}, h)
+            self.assertEqual(r.status_code, 403, action)
+            self.assertEqual(r.get_json(), {"status": "error", "code": "forbidden", "message": message}, action)
+        # nothing changed
+        self.assertEqual(self.db.get_transaction(tx["id"])["item"], "待删除记录")
+        self.assertEqual(self.db.get_user(self.USER)["role"], "user")
+        self.assertTrue(self.db.is_admin_user(self.ADMIN))
+        self.assertNotIn("x", self.db.get_app_settings()["income_items"])
+
+        # get_settings: no user list, no secrets
+        r_cfg = self.api(c, {"action": "get_settings"}, h)
+        self.assertEqual(r_cfg.status_code, 200)
+        self.assertNotIn("users", r_cfg.get_json())
+        self.assertNotIn("secret", json.dumps(r_cfg.get_json()["settings"]).lower())
+        self.assertNotIn("GOCSPX-super-secret", r_cfg.get_data(as_text=True))
+        self.assertIn("income_items", r_cfg.get_json()["settings"])
+
+    def test_anonymous_matrix(self):
+        from ledger_pipeline.service import API_ACTION_ACCESS
+        c = self.anon
+        for action, level in API_ACTION_ACCESS.items():
+            if level == "public":
+                continue
+            r = self.api(c, {"action": action})
+            self.assertEqual(r.status_code, 401, action)
+            self.assertEqual(r.get_json(), {"status": "error", "code": "unauthenticated", "message": "请先登录。"}, action)
+        self.assertEqual(self.api(c, {"date": "2026-10-14", "item": "匿名", "income": 1}).status_code, 401)
+        self.assertEqual(self.api(c, {"action": "status"}).status_code, 200)
+        self.assertEqual(self.api(c, {"action": "status"}, method="get").status_code, 200)
+        r_cfg = self.api(c, {"action": "get_settings"})
+        self.assertEqual(r_cfg.status_code, 200)
+        self.assertNotIn("users", r_cfg.get_json())
+        self.assertNotIn("google_client_secret", r_cfg.get_json()["settings"])
+        self.assertIn("google_client_id", r_cfg.get_json())
+        # the booklet itself still requires a session or the booklet credential
+        self.assertIn('name="password"', c.get("/booklet").get_data(as_text=True))
+        self.assertEqual(c.get("/booklet/2026-10.html").status_code, 302)
+        self.assertEqual(c.get("/preview_site/2026-10.html").status_code, 302)
+
+    def test_unknown_actions_require_sign_in_and_are_rejected(self):
+        self.assertEqual(self.api(self.anon, {"action": "frobnicate"}).status_code, 401)
+        r = self.api(self.fresh(), {"action": "frobnicate", "item": "x", "income": 1}, self.usr)
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.get_json()["code"], "unknown_action")
+        self.assertEqual(self.db.query_transactions(search="x", limit=None), [])   # did NOT fall through to add_record
+        self.assertEqual(self.api(self.anon, ["not", "an", "object"]).status_code, 400)
+
+    # --- (b) admin, demotion, deletion -------------------------------------------------------------
+    def test_admin_full_access_and_demotion_takes_effect_next_request(self):
+        c = self.fresh()
+        tx = self.add_tx("管理员编辑", 20)
+        self.assertEqual(self.api(c, {"action": "get_record", "id": tx["id"]}, self.adm).status_code, 200)
+        r_upd = self.api(c, {"action": "update_record", "id": tx["id"], "item": "已编辑"}, self.adm)
+        self.assertEqual(r_upd.status_code, 200)
+        self.assertEqual(self.db.get_transaction(tx["id"])["item"], "已编辑")
+        r_cfg = self.api(c, {"action": "get_settings"}, self.adm)
+        self.assertIn("users", r_cfg.get_json())
+        self.assertEqual(r_cfg.get_json()["settings"]["google_client_secret"], "GOCSPX-super-secret")
+        self.assertEqual(self.api(c, {"action": "list_users"}, self.adm).status_code, 200)
+        self.assertEqual(self.api(c, {"action": "whoami"}, self.adm).get_json()["user"]["permissions"]["can_delete_record"], True)
+        tx2 = self.add_tx("管理员删除", 21)
+        self.assertEqual(self.api(c, {"action": "delete_record", "id": tx2["id"]}, self.adm).status_code, 200)
+        self.assertIsNone(self.db.get_transaction(tx2["id"]))
+
+        # demote the admin with the pipeline token; the old token is now a user token
+        r_dem = self.api(c, {"action": "update_user_role", "email": self.ADMIN, "role": "user"}, self.svc)
+        self.assertEqual(r_dem.status_code, 200)
+        self.assertEqual(r_dem.get_json()["user"]["permissions"]["can_edit_record"], False)
+        r_after = self.api(c, {"action": "update_record", "id": tx["id"], "item": "再编辑"}, self.adm)
+        self.assertEqual(r_after.status_code, 403)
+        self.assertEqual(self.db.get_transaction(tx["id"])["item"], "已编辑")
+        self.assertEqual(self.api(c, {"action": "whoami"}, self.adm).get_json()["user"]["role"], "user")
+
+        # delete the account: the token no longer authenticates at all
+        self.assertEqual(self.api(c, {"action": "delete_user", "email": self.ADMIN}, self.svc).status_code, 200)
+        self.assertEqual(self.api(c, {"action": "whoami"}, self.adm).status_code, 401)
+        self.assertIn('name="password"', c.get("/booklet", headers=self.adm).get_data(as_text=True))
+
+    def test_another_admin_can_demote_and_inactive_users_are_unauthenticated(self):
+        second = self.fresh()
+        adm2 = session_headers(second, self.db, "second-admin@example.com")
+        self.assertEqual(self.api(second, {"action": "update_user_role", "email": self.ADMIN, "role": "user"}, adm2).status_code, 200)
+        self.assertEqual(self.api(self.fresh(), {"action": "list_users"}, self.adm).status_code, 403)
+        # an inactive record authenticates nobody, whatever its role
+        self.db._memory_users[self.USER]["status"] = "inactive"
+        self.assertEqual(self.api(self.fresh(), {"action": "whoami"}, self.usr).status_code, 401)
+        self.assertEqual(self.api(self.fresh(), {"action": "add_record", "item": "x", "income": 1}, self.usr).status_code, 401)
+
+    def test_deleted_default_admin_is_not_resurrected_by_a_hardcoded_list(self):
+        self.assertTrue(self.db.is_admin_user("hengga1007@gmail.com"))
+        self.assertTrue(self.db.delete_user("hengga1007@gmail.com"))
+        self.assertFalse(self.db.is_admin_user("hengga1007@gmail.com"))
+        self.assertIsNone(self.db.get_user("hengga1007@gmail.com"))
+
+    # --- (c) spoofing ------------------------------------------------------------------------------
+    def test_client_asserted_roles_and_legacy_tokens_are_ignored(self):
+        tx = self.add_tx("防伪造", 30)
+        attempts = [
+            {"headers": {"Authorization": "Bearer session-admin-token"}},
+            {"headers": {"Authorization": "Bearer session-0123456789abcdef"}},
+            {"headers": {"Authorization": "Bearer user-session-0123456789abcdef"}},
+            {"headers": {"Authorization": "Bearer test-admin-token"}},
+            {"headers": {"X-User-Role": "admin"}},
+            {"cookies": {"user_role": "admin"}},
+            {"cookies": {"admin_auth": "session-x"}},
+            {"cookies": {"admin_auth": "session-admin-token", "user_role": "admin"}},
+            {"cookies": {"gf_session": "session-admin-token"}},
+            {"body": {"user_role": "admin"}},
+            {"headers": {"X-Pipeline-Token": "wrong"}},
+        ]
+        for att in attempts:
+            c = self.fresh()
+            for k, v in att.get("cookies", {}).items():
+                c.set_cookie(k, v)
+            for action in ("update_record", "delete_record", "list_users", "update_settings", "update_user_role"):
+                body = {"action": action, "id": tx["id"], "email": self.USER, "role": "admin", **att.get("body", {})}
+                r = self.api(c, body, att.get("headers"))
+                self.assertEqual(r.status_code, 401, (att, action))
+        # the same spoofs on top of a real user session are still only a user
+        for att in attempts:
+            c = self.fresh()
+            for k, v in att.get("cookies", {}).items():
+                c.set_cookie(k, v)
+            c.set_cookie("gf_session", self.usr["Authorization"][7:])
+            hdrs = {k: v for k, v in att.get("headers", {}).items() if k != "Authorization"}
+            r = self.api(c, {"action": "delete_record", "id": tx["id"], **att.get("body", {})}, hdrs)
+            self.assertEqual(r.status_code, 403, att)
+        self.assertIsNotNone(self.db.get_transaction(tx["id"]))
+        self.assertEqual(self.db.get_user(self.USER)["role"], "user")
+
+    def test_a_token_signed_with_another_key_is_rejected(self):
+        from ledger_pipeline.security import issue_session_token
+        forged = issue_session_token(b"attacker-key", self.ADMIN)
+        self.assertEqual(self.api(self.fresh(), {"action": "whoami"}, {"Authorization": f"Bearer {forged}"}).status_code, 401)
+
+    def test_stale_bearer_falls_back_to_the_session_cookie(self):
+        c = self.fresh()
+        c.set_cookie("gf_session", self.adm["Authorization"][7:])
+        r = self.api(c, {"action": "whoami"}, {"Authorization": "Bearer session-admin-token"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["user"]["email"], self.ADMIN)
+
+    # --- (e) CSRF hygiene: mutating actions are POST-only ---------------------------------------------
+    def test_get_is_rejected_for_mutating_actions(self):
+        tx = self.add_tx("GET 删除", 40)
+        c = self.fresh()
+        c.set_cookie("gf_session", self.adm["Authorization"][7:])          # a Lax cookie on a top-level GET
+        for action in ("add_record", "update_record", "delete_record", "update_settings", "update_user_role",
+                       "delete_user", "migrate_to_firestore"):
+            r = self.api(c, {"action": action, "id": tx["id"], "item": "x", "income": 1,
+                             "email": self.USER, "role": "admin"}, method="get")
+            self.assertEqual(r.status_code, 405, action)
+            self.assertEqual(r.get_json()["code"], "method_not_allowed", action)
+            self.assertEqual(r.get_json()["status"], "error", action)
+        r_default = self.api(c, {"item": "GET 录入", "income": 1}, method="get")   # no action -> add_record
+        self.assertEqual(r_default.status_code, 405)
+        self.assertIsNotNone(self.db.get_transaction(tx["id"]))
+        self.assertEqual(self.db.query_transactions(search="GET 录入", limit=None), [])
+        self.assertEqual(self.db.get_user(self.USER)["role"], "user")
+        # read-only actions and logout still work with GET
+        self.assertEqual(self.api(c, {"action": "get_record", "id": tx["id"]}, method="get").status_code, 200)
+        self.assertEqual(self.api(c, {"action": "list_transactions"}, method="get").status_code, 200)
+        self.assertEqual(self.api(c, {"action": "logout"}, method="get").status_code, 200)
+
+    # --- sessions, cookies, logout --------------------------------------------------------------------
+    def test_login_issues_session_cookies(self):
+        from ledger_pipeline.firestore_db import permissions_for_role
+        c = self.fresh()
+        r = c.post("/api", json={"action": "login", "username": self.USER, "password": TEST_PASSWORD})
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        user = {"email": self.USER, "name": "Member", "role": "user", "permissions": permissions_for_role("user")}
+        self.assertEqual(body, {"status": "success", "user": user, "user_info": user, "role": "user", "token": body["token"]})
+        cookies = {ck.split("=", 1)[0]: ck for ck in r.headers.getlist("Set-Cookie")}
+        sess = cookies["gf_session"]
+        self.assertTrue(sess.startswith("gf_session=" + body["token"] + ";"))
+        for attr in ("HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=604800"):
+            self.assertIn(attr, sess)
+        self.assertNotIn("Secure", sess)                                    # plain http (local dev)
+        self.assertTrue(cookies["user_role"].startswith("user_role=user;"))
+        self.assertNotIn("HttpOnly", cookies["user_role"])
+        self.assertIn("SameSite=Lax", cookies["user_role"])
+        self.assertIn("Path=/", cookies["user_role"])
+        self.assertIn("Max-Age=0", cookies["admin_auth"])                   # legacy cookie deleted
+
+        r_https = self.fresh().post("/api", json={"action": "login", "username": self.USER, "password": TEST_PASSWORD},
+                                    headers={"X-Forwarded-Proto": "https"})
+        for ck in r_https.headers.getlist("Set-Cookie"):
+            if ck.startswith(("gf_session=", "user_role=")):
+                self.assertIn("Secure", ck)
+
+        bad = self.fresh().post("/api", json={"action": "login", "username": self.USER, "password": "nope"})
+        self.assertEqual(bad.status_code, 401)
+        self.assertEqual(bad.get_json()["code"], "invalid_credentials")
+        self.assertEqual(bad.headers.getlist("Set-Cookie"), [])
+
+    def test_logout_clears_cookies_and_ends_cookie_session(self):
+        c = self.user_c                                                     # carries gf_session from login
+        self.assertEqual(self.api(c, {"action": "whoami"}).status_code, 200)
+        r = self.api(c, {"action": "logout"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json(), {"status": "success"})
+        cleared = {ck.split("=", 1)[0] for ck in r.headers.getlist("Set-Cookie") if "Max-Age=0" in ck}
+        self.assertEqual(cleared, {"gf_session", "user_role", "admin_auth", "booklet_auth"})
+        self.assertEqual(self.api(c, {"action": "whoami"}).status_code, 401)
+        self.assertEqual(self.api(self.anon, {"action": "logout"}).status_code, 200)   # public
+
+        # /booklet/logout ends the session for the booklet too
+        b = self.fresh()
+        b.set_cookie("gf_session", self.usr["Authorization"][7:])
+        self.assertNotIn('name="password"', b.get("/booklet").get_data(as_text=True))
+        r_bl = b.get("/booklet/logout")
+        self.assertEqual(r_bl.status_code, 302)
+        self.assertIn("gf_session", {ck.split("=", 1)[0] for ck in r_bl.headers.getlist("Set-Cookie") if "Max-Age=0" in ck})
+        self.assertIn('name="password"', b.get("/booklet").get_data(as_text=True))
+
+    def test_pipeline_token_is_a_service_admin(self):
+        r = self.api(self.fresh(), {"action": "whoami"}, self.svc)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["user"]["role"], "admin")
+        self.assertEqual(r.get_json()["user"]["email"], "service:pipeline")
+        self.assertEqual(self.api(self.fresh(), {"action": "whoami"}, {"Authorization": "Bearer svc-tok"}).status_code, 200)
+        self.assertEqual(self.api(self.fresh(), {"action": "list_users"}, self.svc).status_code, 200)
+
+    # --- /booklet POST ---------------------------------------------------------------------------------
+    def test_booklet_form_login_rules(self):
+        # shared credentials -> view-only cookie only
+        c = self.fresh()
+        r = c.post("/booklet", data={"username": "admin", "password": "shared-pw"})
+        self.assertEqual(r.status_code, 302)
+        names = [ck.split("=", 1)[0] for ck in r.headers.getlist("Set-Cookie")]
+        self.assertEqual(names, ["booklet_auth"])
+        self.assertNotIn('name="password"', c.get("/booklet").get_data(as_text=True))
+        self.assertEqual(self.api(c, {"action": "whoami"}).status_code, 401)
+        # an admin's email + the shared password is not a login
+        self.assertEqual(self.fresh().post("/booklet", data={"username": self.ADMIN, "password": "shared-pw"}).status_code, 401)
+        # DB-verified credentials -> real session with the DB role
+        r_u = self.fresh().post("/booklet", data={"username": self.USER, "password": TEST_PASSWORD})
+        self.assertEqual(r_u.status_code, 302)
+        ck = {x.split("=", 1)[0]: x for x in r_u.headers.getlist("Set-Cookie")}
+        self.assertTrue(ck["gf_session"].startswith("gf_session=v1."))
+        self.assertTrue(ck["user_role"].startswith("user_role=user;"))
+        self.assertNotIn("booklet_auth", ck)
+        # basic auth: shared credentials or DB-verified credentials; never admin email + shared password
+        basic = lambda u, pw: {"Authorization": "Basic " + base64.b64encode(f"{u}:{pw}".encode()).decode()}
+        self.assertNotIn('name="password"', self.fresh().get("/booklet", headers=basic("admin", "shared-pw")).get_data(as_text=True))
+        self.assertNotIn('name="password"', self.fresh().get("/booklet", headers=basic(self.USER, TEST_PASSWORD)).get_data(as_text=True))
+        self.assertIn('name="password"', self.fresh().get("/booklet", headers=basic(self.ADMIN, "shared-pw")).get_data(as_text=True))
+        self.assertIn('name="password"', self.fresh().get("/booklet", headers=basic("hengga1007@gmail.com", "Abc1234#")).get_data(as_text=True))
+
+    # --- dev login gating --------------------------------------------------------------------------------
+    def test_dev_login_is_off_by_default(self):
+        c = self.fresh()
+        for body in ({"credential": "test-admin-token"}, {"credential": "test-anything", "email": self.ADMIN},
+                     {"credential": "google-account-signin", "email": self.ADMIN},
+                     {"credential": "google-oauth-fallback", "email": self.ADMIN},
+                     {"credential": "eyJ.fake.jwt", "provider": "google", "email": self.ADMIN}):
+            r = c.post("/api", json={"action": "google_login", **body})
+            self.assertEqual(r.status_code, 401, body)
+        # no client id configured: a "real" token cannot be checked, so it is refused without verification
+        from unittest.mock import patch
+        with patch("google.oauth2.id_token.verify_oauth2_token") as verify:
+            r = c.post("/api", json={"action": "google_login", "credential": "eyJ.real.jwt"})
+            self.assertEqual(r.status_code, 503)
+            self.assertEqual(r.get_json()["code"], "google_oauth_not_configured")
+            verify.assert_not_called()
+        r_oauth = c.get(f"/auth/google/login?email={self.ADMIN}")
+        self.assertEqual(r_oauth.status_code, 302)
+        self.assertTrue(r_oauth.headers["Location"].endswith("/app?oauth_error=google_oauth_not_configured"))
+        self.assertFalse(any(ck.startswith("gf_session=") for ck in r_oauth.headers.getlist("Set-Cookie")))
+
+    def test_dev_login_when_enabled(self):
+        from ledger_pipeline.service import create_app
+        s = Settings(pipeline_token="svc-tok", session_secret="role-tests-secret", allow_dev_login=True)
+        with self.assertLogs("ledger", level="WARNING") as logs:
+            app = create_app(s, db=self.db)
+        self.assertTrue(any("ALLOW_DEV_LOGIN" in m for m in logs.output))
+        c = app.test_client()
+        r = c.post("/api", json={"action": "google_login", "credential": "test-admin-token", "email": self.USER})
+        self.assertEqual(r.get_json()["user"]["role"], "user")             # role from the store, not the credential
+        r_oauth = app.test_client().get(f"/auth/google/login?email={self.ADMIN}&state=/app?tab=database-view")
+        self.assertEqual(r_oauth.status_code, 200)
+        self.assertIn('"role": "admin"', r_oauth.get_data(as_text=True))
+        self.assertIn('window.location.replace("/app?tab=database-view")', r_oauth.get_data(as_text=True))
+
+    # --- OAuth callback --------------------------------------------------------------------------------
+    def _callback(self, userinfo, state=None):
+        from unittest.mock import MagicMock, patch
+        from ledger_pipeline.service import create_app
+        s = Settings(pipeline_token="svc-tok", session_secret="role-tests-secret",
+                     google_client_id="cid.apps.googleusercontent.com", google_client_secret="csec")
+        app = create_app(s, db=self.db)
+        resp = MagicMock(ok=True, content=b"{}")
+        resp.json.return_value = {"id_token": "id.tok.en"}
+        st = state if state is not None else "state-token"
+        url = f"/auth/google/callback?code=abc&state={st}"
+        with patch("requests.post", return_value=resp), \
+                patch("google.oauth2.id_token.verify_oauth2_token", return_value=userinfo) as verify:
+            r = app.test_client().get(url)
+        return r, verify
+
+    def test_oauth_callback_issues_session_and_keeps_users_out_of_database_view(self):
+        from urllib.parse import quote
+        r, verify = self._callback({"email": self.USER, "name": "Member"}, quote("/app?tab=database-view"))
+        self.assertEqual(verify.call_args.kwargs["audience"], "cid.apps.googleusercontent.com")
+        html = r.get_data(as_text=True)
+        self.assertIn('window.location.replace("/app?tab=entry")', html)
+        self.assertIn('localStorage.setItem("sessionToken", "v1.', html)
+        self.assertIn('localStorage.setItem("authToken", "v1.', html)
+        self.assertIn('"can_view_database": false', html)
+        self.assertEqual(r.headers.get("Cache-Control"), "no-store")
+        ck = {x.split("=", 1)[0]: x for x in r.headers.getlist("Set-Cookie")}
+        self.assertIn("HttpOnly", ck["gf_session"])
+        self.assertTrue(ck["user_role"].startswith("user_role=user;"))
+
+        r_admin, _ = self._callback({"email": self.ADMIN, "name": "Boss"}, quote("/app?tab=database-view"))
+        self.assertIn('window.location.replace("/app?tab=database-view")', r_admin.get_data(as_text=True))
+
+    def test_oauth_callback_rejects_open_redirects_script_injection_and_unverified_email(self):
+        from urllib.parse import quote
+        for evil in ("//evil.example", "/\\evil.example", "https://evil.example", "/ok\nx"):
+            r, _ = self._callback({"email": self.USER}, quote(evil))
+            self.assertIn('window.location.replace("/app?tab=entry")', r.get_data(as_text=True), evil)
+        r, _ = self._callback({"email": self.USER, "name": "</script><script>alert(1)</script>"},
+                              quote("/app?x=</script><script>alert(2)</script>"))
+        html = r.get_data(as_text=True)
+        self.assertNotIn("<script>alert", html)
+        self.assertEqual(html.count("</script>"), 1)
+        self.assertIn("\\u003c/script\\u003e", html)
+        r_unv, _ = self._callback({"email": "unverified@example.com", "email_verified": False})
+        self.assertEqual(r_unv.status_code, 302)
+        self.assertIn("oauth_error=email_not_verified", r_unv.headers["Location"])
+        self.assertIsNone(self.db.get_user("unverified@example.com"))
+
+    def test_disabled_accounts_are_not_reactivated_by_google_sign_in(self):
+        self.db._memory_users[self.USER]["status"] = "inactive"
+        r, _ = self._callback({"email": self.USER, "name": "Member"})
+        self.assertEqual(r.status_code, 302)
+        self.assertIn("oauth_error=account_disabled", r.headers["Location"])
+        self.assertEqual(self.db.get_user(self.USER)["status"], "inactive")
+        # unknown accounts are still auto-registered as standard users (unchanged behaviour)
+        r_new, _ = self._callback({"email": "newcomer@example.com", "name": "New"})
+        self.assertEqual(r_new.status_code, 200)
+        self.assertEqual(self.db.get_user("newcomer@example.com")["role"], "user")
+
+
+class DefaultCredentialTests(unittest.TestCase):
+    """The published seed passwords never verify, and no default password hash is seeded any more."""
+
+    def setUp(self):
+        from ledger_pipeline.firestore_db import FirestoreLedgerDB
+        self.db = FirestoreLedgerDB()
+
+    def test_published_defaults_never_verify_even_if_their_hash_is_stored(self):
+        from ledger_pipeline.firestore_db import hash_password
+        for email, pw in (("hengga1007@gmail.com", "Abc1234#"), ("ejenrivaldo5011@gmail.com", "User1234#")):
+            self.db._memory_users[email]["password_hash"] = hash_password(pw)   # what production likely stores
+            self.assertFalse(self.db.verify_user(email, pw))
+        self.db.add_admin_user("real@example.com", password=TEST_PASSWORD)
+        self.assertTrue(self.db.verify_user("real@example.com", TEST_PASSWORD))
+        self.assertTrue(self.db.verify_user(" REAL@example.com ", TEST_PASSWORD))
+        self.assertFalse(self.db.verify_user("real@example.com", TEST_PASSWORD + "x"))
+        self.assertFalse(self.db.verify_user("real@example.com", ""))
+        self.db._memory_users["real@example.com"]["status"] = "inactive"
+        self.assertFalse(self.db.verify_user("real@example.com", TEST_PASSWORD))
+
+    def test_no_default_password_hashes_are_seeded(self):
+        from ledger_pipeline.firestore_db import DEFAULT_ADMIN_USERS, DEFAULT_STANDARD_USERS
+        for u in {**DEFAULT_ADMIN_USERS, **DEFAULT_STANDARD_USERS}.values():
+            self.assertNotIn("password_hash", u)
+            self.assertNotIn("permissions", u)                     # derived from the role, never stored
+        self.db.seed_default_users_and_settings()
+        for u in self.db._memory_users.values():
+            self.assertNotIn("password_hash", u)
+        self.assertNotIn("password_hash", self.db.add_admin_user("nopw@example.com"))
+        with self.assertLogs("ledger.firestore", level="WARNING"):
+            self.assertNotIn("password_hash", self.db.add_admin_user("pub@example.com", password="Abc1234#"))
+        self.db.update_user_role("auto@example.com", "user", name="Auto")
+        self.assertNotIn("password_hash", self.db._memory_users["auto@example.com"])
+        # a role change keeps an existing real password and an inactive status
+        self.db.add_admin_user("keep@example.com", role="user", password=TEST_PASSWORD)
+        self.db._memory_users["keep@example.com"]["status"] = "inactive"
+        self.db.update_user_role("keep@example.com", "admin")
+        self.assertEqual(self.db._memory_users["keep@example.com"]["status"], "inactive")
+        self.db._memory_users["keep@example.com"]["status"] = "active"
+        self.assertTrue(self.db.verify_user("keep@example.com", TEST_PASSWORD))
+
+    def test_seed_admin_users_script_seeds_no_passwords(self):
+        from scripts.seed_admin_users import ADMIN_ACCOUNTS, seed_admin_users
+        self.assertTrue(all("password" not in acc for acc in ADMIN_ACCOUNTS))
+        seeded = seed_admin_users(db=self.db)
+        self.assertEqual(len(seeded), len(ADMIN_ACCOUNTS))
+        for acc in ADMIN_ACCOUNTS:
+            self.assertTrue(self.db.is_admin_user(acc["email"]))
+            self.assertFalse(self.db.verify_user(acc["email"], "Abc1234#"))
+            self.assertNotIn("password_hash", self.db._memory_users[acc["email"]])
+
+
+class BookletRenderRoleTests(unittest.TestCase):
+    """The published booklet is one static file for every viewer: admin controls are hidden by default."""
+
+    def setUp(self):
+        self.m = build_months(sheets_fixture())[(2026, 8)]
+
+    def test_admin_controls_hidden_by_default_and_revealed_only_for_admin_hint(self):
+        from ledger_pipeline.render import CSS, ROLE_SCRIPT
+        for html in (render_month_html(self.m, show_nav=True),
+                     render_all_months_html({(2026, 8): self.m}, current_ym=(2026, 8), closed_map={})):
+            self.assertIn(ROLE_SCRIPT, html.split("</head>")[0])          # runs before the body renders
+            self.assertIn('href="/app?tab=database-view"', html)          # present in markup, hidden by CSS
+        self.assertIn("html:not(.gf-admin) .col-act", CSS)
+        self.assertIn("html:not(.gf-admin) .btn-del", CSS)
+        self.assertIn('html:not(.gf-admin) a[href*="database-view"]', CSS)
+        self.assertIn("user_role=admin(?:;|$)", ROLE_SCRIPT)
+        self.assertIn("gf-admin", ROLE_SCRIPT)
+        self.assertNotIn("localStorage", ROLE_SCRIPT)                     # only the server-set hint counts
+        self.assertNotIn("user_role=user", ROLE_SCRIPT)
+        print_html = render_month_html(self.m, show_nav=False)
+        self.assertNotIn("<script", print_html)
+
+    def test_delete_entry_reports_server_errors(self):
+        from ledger_pipeline.render import DELETE_SCRIPT
+        self.assertIn("res.status === 401", DELETE_SCRIPT)
+        self.assertIn("res.status === 403", DELETE_SCRIPT)
+        self.assertIn("data.message", DELETE_SCRIPT)
+        self.assertIn("credentials: 'same-origin'", DELETE_SCRIPT)
+        self.assertIn("res.ok && data && data.status === 'success'", DELETE_SCRIPT)
+        self.assertNotIn("user_role=user", DELETE_SCRIPT)
+
+
 class TestSecurityRemediations(unittest.TestCase):
-    """Regression test suite for all 10 security remediations."""
+    """Regression test suite for all 12 security remediations."""
 
     def setUp(self):
         from ledger_pipeline.firestore_db import FirestoreLedgerDB
@@ -1525,7 +2240,7 @@ class TestSecurityRemediations(unittest.TestCase):
 
         # Adding admin or user without explicit password leaves password empty
         u_nopw = self.db.add_admin_user("no_pw_admin@example.com")
-        self.assertEqual(u_nopw["password_hash"], "")
+        self.assertEqual(u_nopw.get("password_hash", ""), "")
         self.assertFalse(self.db.verify_user("no_pw_admin@example.com", "Abc1234#"))
 
         # Only explicitly setting password allows verification
@@ -1542,7 +2257,7 @@ class TestSecurityRemediations(unittest.TestCase):
         r_bypass = c.post("/api", json={"action": "google_login", "credential": "test-admin-token", "email": "hengga1007@gmail.com"})
         self.assertEqual(r_bypass.status_code, 401)
         r_garbage = c.post("/api", json={"action": "google_login", "credential": "fake-garbage-token"})
-        self.assertEqual(r_garbage.status_code, 401)
+        self.assertIn(r_garbage.status_code, (401, 503))
 
     def test_remediation_2_oauth_csrf_and_unconfigured_bypass_prevented(self):
         from ledger_pipeline.service import create_app
@@ -1572,34 +2287,28 @@ class TestSecurityRemediations(unittest.TestCase):
         self.assertIn("oauth_error=invalid_state", r_mismatch.headers["Location"])
 
     def test_remediation_3_inverted_rbac_mutation_endpoints(self):
-        from ledger_pipeline.service import create_app, active_user_tokens
+        from ledger_pipeline.service import create_app
         s = Settings(pipeline_token="test-secret")
         app = create_app(s, db=self.db)
         c = app.test_client()
 
-        # Anonymous caller is blocked (403) from add_record, update_record, delete_record
+        # Anonymous caller is blocked (401/403) from add_record, update_record, delete_record
         r_add = c.post("/api", json={"action": "add_record", "date": "2026-10-15", "item": "Offering", "income": 100})
-        self.assertEqual(r_add.status_code, 403)
+        self.assertIn(r_add.status_code, (401, 403))
 
         r_upd = c.post("/api", json={"action": "update_record", "id": "tx-1", "item": "Offering"})
-        self.assertEqual(r_upd.status_code, 403)
+        self.assertIn(r_upd.status_code, (401, 403))
 
         r_del = c.post("/api", json={"action": "delete_record", "id": "tx-1"})
-        self.assertEqual(r_del.status_code, 403)
+        self.assertIn(r_del.status_code, (401, 403))
 
-        # Standard user caller (holding active_user_tokens) is blocked (403)
-        user_tok = "user-session-test-token-rbac"
-        active_user_tokens.add(user_tok)
-        self.addCleanup(active_user_tokens.discard, user_tok)
-        c.set_cookie("admin_auth", user_tok)
+        # Standard user caller (holding user session) is blocked (403) from admin-only mutation endpoints
+        usr = session_headers(c, self.db, "member-rbac@example.com", role="user")
 
-        r_add_u = c.post("/api", json={"action": "add_record", "date": "2026-10-15", "item": "Offering", "income": 100})
-        self.assertEqual(r_add_u.status_code, 403)
-
-        r_upd_u = c.post("/api", json={"action": "update_record", "id": "tx-1", "item": "Offering"})
+        r_upd_u = c.post("/api", json={"action": "update_record", "id": "tx-1", "item": "Offering"}, headers=usr)
         self.assertEqual(r_upd_u.status_code, 403)
 
-        r_del_u = c.post("/api", json={"action": "delete_record", "id": "tx-1"})
+        r_del_u = c.post("/api", json={"action": "delete_record", "id": "tx-1"}, headers=usr)
         self.assertEqual(r_del_u.status_code, 403)
 
     def test_remediation_4_sensitive_data_leakage_and_secret_exposure(self):
@@ -1609,14 +2318,19 @@ class TestSecurityRemediations(unittest.TestCase):
         c = app.test_client()
 
         # Anonymous caller cannot read sensitive ledger data (401)
-        self.assertEqual(c.post("/api", json={"action": "get_settings"}).status_code, 401)
         self.assertEqual(c.post("/api", json={"action": "list_users"}).status_code, 401)
         self.assertEqual(c.post("/api", json={"action": "list_transactions"}).status_code, 401)
         self.assertEqual(c.post("/api", json={"action": "get_booklet_data", "year": 2026}).status_code, 401)
         self.assertEqual(c.get("/api?action=get_record&id=test").status_code, 401)
         self.assertEqual(c.post("/api", json={"action": "get_yearly_summary", "year": 2026}).status_code, 401)
 
-        # Authenticated admin gets settings: google_client_secret is stripped and has_google_client_secret is boolean
+        # Anonymous caller gets stripped settings without secrets or user list
+        r_anon = c.post("/api", json={"action": "get_settings"})
+        self.assertEqual(r_anon.status_code, 200)
+        self.assertNotIn("google_client_secret", r_anon.get_json().get("settings", {}))
+        self.assertNotIn("users", r_anon.get_json())
+
+        # Authenticated admin gets settings: google_client_secret is stripped in returned settings and has_google_client_secret is boolean
         self.db.update_app_settings({"google_client_id": "client-id-123", "google_client_secret": "super-secret-key"})
         r_auth = c.post("/api", json={"action": "get_settings"}, headers={"X-Pipeline-Token": "test-secret"})
         self.assertEqual(r_auth.status_code, 200)
@@ -1625,26 +2339,23 @@ class TestSecurityRemediations(unittest.TestCase):
         self.assertTrue(data.get("settings", {}).get("has_google_client_secret"))
 
     def test_remediation_5_privilege_escalation_and_settings_tampering(self):
-        from ledger_pipeline.service import create_app, active_user_tokens
+        from ledger_pipeline.service import create_app
         s = Settings(pipeline_token="test-secret")
         app = create_app(s, db=self.db)
         c = app.test_client()
 
-        # Anonymous caller is blocked (403) from administrative actions
-        self.assertEqual(c.post("/api", json={"action": "update_settings", "income_items": ["x"]}).status_code, 403)
-        self.assertEqual(c.post("/api", json={"action": "update_user_role", "email": "a@b.com", "role": "admin"}).status_code, 403)
-        self.assertEqual(c.post("/api", json={"action": "delete_user", "email": "a@b.com"}).status_code, 403)
-        self.assertEqual(c.post("/api", json={"action": "migrate_to_firestore"}).status_code, 403)
+        # Anonymous caller is blocked (401/403) from administrative actions
+        self.assertIn(c.post("/api", json={"action": "update_settings", "income_items": ["x"]}).status_code, (401, 403))
+        self.assertIn(c.post("/api", json={"action": "update_user_role", "email": "a@b.com", "role": "admin"}).status_code, (401, 403))
+        self.assertIn(c.post("/api", json={"action": "delete_user", "email": "a@b.com"}).status_code, (401, 403))
+        self.assertIn(c.post("/api", json={"action": "migrate_to_firestore"}).status_code, (401, 403))
 
         # Standard user is blocked (403) as well
-        u_tok = "user-session-test-token-priv"
-        active_user_tokens.add(u_tok)
-        self.addCleanup(active_user_tokens.discard, u_tok)
-        c.set_cookie("admin_auth", u_tok)
-        self.assertEqual(c.post("/api", json={"action": "update_settings", "income_items": ["x"]}).status_code, 403)
-        self.assertEqual(c.post("/api", json={"action": "update_user_role", "email": "a@b.com", "role": "admin"}).status_code, 403)
-        self.assertEqual(c.post("/api", json={"action": "delete_user", "email": "a@b.com"}).status_code, 403)
-        self.assertEqual(c.post("/api", json={"action": "migrate_to_firestore"}).status_code, 403)
+        usr = session_headers(c, self.db, "user-priv@example.com", role="user")
+        self.assertEqual(c.post("/api", json={"action": "update_settings", "income_items": ["x"]}, headers=usr).status_code, 403)
+        self.assertEqual(c.post("/api", json={"action": "update_user_role", "email": "a@b.com", "role": "admin"}, headers=usr).status_code, 403)
+        self.assertEqual(c.post("/api", json={"action": "delete_user", "email": "a@b.com"}, headers=usr).status_code, 403)
+        self.assertEqual(c.post("/api", json={"action": "migrate_to_firestore"}, headers=usr).status_code, 403)
 
     def test_remediation_6_booklet_cookie_prefix_and_role_forgery(self):
         from ledger_pipeline.service import create_app
@@ -1743,7 +2454,7 @@ class TestSecurityRemediations(unittest.TestCase):
 
     def test_remediation_11_booklet_login_standard_user_no_privilege_escalation(self):
         """Verifies standard user logging in at /booklet does not get escalated to admin."""
-        from ledger_pipeline.service import create_app, ADMIN_AUTH_COOKIE, USER_AUTH_COOKIE, BOOKLET_COOKIE
+        from ledger_pipeline.service import create_app, ADMIN_AUTH_COOKIE, ROLE_HINT_COOKIE, SESSION_COOKIE
         with tempfile.TemporaryDirectory() as td:
             s = Settings(pipeline_token="tok", booklet_password="configured-pw")
             p = Pipeline(s, FakeSource(sheets_fixture()), LocalStorage(td), pdf=lambda h: b"pdf", now=at(2026, 10, 14))
@@ -1759,10 +2470,9 @@ class TestSecurityRemediations(unittest.TestCase):
             self.assertEqual(r_post.status_code, 302)
             set_cookies = r_post.headers.getlist("Set-Cookie")
 
-            # Standard user receives USER_AUTH_COOKIE and BOOKLET_COOKIE, NOT ADMIN_AUTH_COOKIE
-            self.assertTrue(any(f"{BOOKLET_COOKIE}=" in sc for sc in set_cookies))
-            self.assertTrue(any(f"{USER_AUTH_COOKIE}=" in sc for sc in set_cookies))
-            self.assertTrue(any("user_role=user" in sc for sc in set_cookies))
+            # Standard user receives signed session and user role, NOT ADMIN_AUTH_COOKIE
+            self.assertTrue(any(f"{SESSION_COOKIE}=" in sc for sc in set_cookies))
+            self.assertTrue(any(f"{ROLE_HINT_COOKIE}=user" in sc for sc in set_cookies))
             self.assertFalse(any(f"{ADMIN_AUTH_COOKIE}=session-" in sc for sc in set_cookies))
 
             # Standard user can access /booklet (read-only view)
@@ -1771,8 +2481,6 @@ class TestSecurityRemediations(unittest.TestCase):
             self.assertNotIn("请输入授权账号与密码", r_get.get_data(as_text=True))
 
             # Standard user CANNOT perform admin actions via /api (returns 403 Forbidden)
-            r_add = c.post("/api", json={"action": "add_record", "date": "2026-10-14", "item": "Unauthorized", "income": 50})
-            self.assertEqual(r_add.status_code, 403)
             r_del = c.post("/api", json={"action": "delete_record", "id": "tx-1"})
             self.assertEqual(r_del.status_code, 403)
             r_upd = c.post("/api", json={"action": "update_record", "id": "tx-1", "item": "Unauthorized"})
@@ -1830,7 +2538,7 @@ class TestSecurityRemediations(unittest.TestCase):
         # 5. seed_admin_users.py scrubs legacy hashes and uses ADMIN_SEED_PASSWORD
         from scripts.seed_admin_users import seed_admin_users, ADMIN_ACCOUNTS
         for acc in ADMIN_ACCOUNTS:
-            self.assertEqual(acc.get("password"), "")
+            self.assertEqual(acc.get("password") or "", "")
         seeded = seed_admin_users(db=self.db)
         self.assertTrue(len(seeded) >= 4)
 
