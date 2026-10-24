@@ -106,8 +106,8 @@ echo "== 5. Build + deploy Cloud Run (Cloud Build from pipeline/Dockerfile)"
 ENVV="CDN_BUCKET=$BUCKET,ARCHIVE_BUCKET=$ARCHIVE_BUCKET,TZ_NAME=$TZ_NAME,GOOGLE_CLOUD_PROJECT=$PROJECT"
 [[ -n "$CDN_URL_MAP" ]] && ENVV="$ENVV,CDN_URL_MAP=$CDN_URL_MAP"
 run gcloud run deploy "$SERVICE" --source "$HERE" --project "$PROJECT" --region "$REGION" \
-    --service-account "$SA" --allow-unauthenticated --memory 1Gi --cpu 1 --timeout 300 \
-    --max-instances 2 --concurrency 4 --set-env-vars "$ENVV" --set-secrets "$SECRETS"
+    --service-account "$SA" --allow-unauthenticated --memory 2Gi --cpu 1 --timeout 300 \
+    --max-instances 2 --concurrency 2 --set-env-vars "$ENVV" --set-secrets "$SECRETS"
 
 echo "== 6. Cloud Scheduler: close the month on its last day (the app ignores other days)"
 if [[ "${CONFIRM_DEPLOY:-}" == "yes" ]]; then

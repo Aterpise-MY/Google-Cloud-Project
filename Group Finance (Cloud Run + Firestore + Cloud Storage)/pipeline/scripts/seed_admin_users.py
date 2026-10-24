@@ -6,8 +6,8 @@ Seeds:
   - admin@groupfinance.com
   - brendon.ang20011007@gmail.com
 
-No password is seeded: these accounts sign in with Google. (The previously published default
-password never verifies, even where its hash is still stored.)
+No default password is hardcoded: accounts sign in with Google OAuth by default,
+or use ADMIN_SEED_PASSWORD if explicitly configured.
 
 Usage:
   FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 PYTHONPATH="pipeline" pipeline/.venv/bin/python pipeline/scripts/seed_admin_users.py
@@ -64,13 +64,15 @@ def seed_admin_users(project_id: str | None = None, db: FirestoreLedgerDB | None
              project, os.environ.get("FIRESTORE_EMULATOR_HOST", "none"))
 
     database = db or FirestoreLedgerDB(project_id=project)
+    database.seed_default_users_and_settings()
     seeded: List[Dict[str, Any]] = []
 
     for acc in ADMIN_ACCOUNTS:
         email = acc["email"]
         name = acc["name"]
         role = acc["role"]
-        user_data = database.add_admin_user(email=email, name=name, role=role)
+        pwd = acc.get("password") or os.environ.get("ADMIN_SEED_PASSWORD", "")
+        user_data = database.add_admin_user(email=email, name=name, role=role, password=pwd)
         seeded.append(user_data)
         log.info("Seeded admin user: %s (role=%s, status=%s)", email, role, user_data.get("status"))
 

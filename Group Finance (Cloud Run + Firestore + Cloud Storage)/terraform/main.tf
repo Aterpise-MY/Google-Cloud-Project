@@ -292,7 +292,7 @@ resource "google_cloud_run_v2_service" "ledger_pipeline" {
   template {
     service_account                  = google_service_account.ledger_pipeline.email
     timeout                          = "300s"
-    max_instance_request_concurrency = 4
+    max_instance_request_concurrency = 2
 
     scaling {
       max_instance_count = 2
@@ -305,7 +305,7 @@ resource "google_cloud_run_v2_service" "ledger_pipeline" {
       resources {
         limits = {
           cpu    = "1"
-          memory = "1Gi"
+          memory = "2Gi"
         }
         cpu_idle = true
       }

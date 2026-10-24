@@ -244,7 +244,7 @@ html, body { background: none; }
     <button class="btn-print" onclick="window.print()">🖨️ 打印 / 导出 PDF</button>
     <a href="/booklet/logout" style="background:#f8fafc;color:#64748b;border-color:#cbd5e1;font-size:12px;" title="退出册子登录">🚪 退出</a>
   </div>
-  <span class="meta">更新于 2026-10-22 16:26 Asia/Kuala_Lumpur</span>
+  <span class="meta">更新于 2026-10-23 21:15 Asia/Kuala_Lumpur</span>
 </div></div>
 <div class="sheet-wrap">
 <div class="sheet">
@@ -263,7 +263,25 @@ html, body { background: none; }
 </div>
 </div>
 <script>
+(function() {
+  try {
+    var u = JSON.parse(localStorage.getItem('currentUser') || 'null');
+    var isUserCookie = document.cookie.indexOf('user_role=user') !== -1;
+    if ((u && u.role && u.role !== 'admin') || isUserCookie) {
+      var style = document.createElement('style');
+      style.textContent = '.col-act, .btn-del, a[href*="database-view"] { display: none !important; }';
+      document.head.appendChild(style);
+    }
+  } catch (e) {}
+})();
 async function deleteEntry(year, month, dateStr, item, income, expense, btn) {
+  try {
+    var u = JSON.parse(localStorage.getItem('currentUser') || 'null');
+    if ((u && u.role && u.role !== 'admin') || document.cookie.indexOf('user_role=user') !== -1) {
+      alert('权限不足：仅管理员 (Admin) 可删除记录。');
+      return;
+    }
+  } catch (e) {}
   var amtStr = Number(income) > 0 ? ('收入: ' + income) : (Number(expense) > 0 ? ('支出: ' + expense) : '');
   var msg = '确定要删除这条记录吗？\n\n' +
             '• 日期: ' + dateStr + '\n' +

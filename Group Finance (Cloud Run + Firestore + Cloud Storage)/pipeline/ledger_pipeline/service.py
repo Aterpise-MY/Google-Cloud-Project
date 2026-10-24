@@ -36,6 +36,9 @@ MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oc
 # Booklet credentials come only from Settings (BOOKLET_USER / BOOKLET_PASSWORD env vars), read in
 # create_app(). There is no default password: unset/empty BOOKLET_PASSWORD disables booklet login.
 BOOKLET_COOKIE = "booklet_auth"
+USER_AUTH_COOKIE = "user_auth"
+active_admin_tokens: set[str] = set()
+active_user_tokens: set[str] = set()
 ADMIN_AUTH_COOKIE = "admin_auth"          # legacy cookie: never read, only deleted
 BOOKLET_COOKIE_MAX_AGE = 2592000  # 30 days
 SESSION_COOKIE = "gf_session"             # HttpOnly signed session token (see security.issue_session_token)
@@ -245,8 +248,9 @@ def build_pipeline(settings: Settings, db: Optional[FirestoreLedgerDB] = None) -
 
     if not settings.bucket:
         site_dir = os.environ.get("SITE_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "preview_site")))
+        archive_dir = os.environ.get("ARCHIVE_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "preview_archive")))
         site = LocalStorage(site_dir)
-        private = LocalStorage(os.path.join(site_dir, "_archive"))
+        private = LocalStorage(archive_dir)
         return Pipeline(settings, source, site, private=private, drive=None, pdf=lambda h: h.encode("utf-8"), invalidate=lambda: None)
 
     site = GcsStorage(settings.bucket)
@@ -355,26 +359,34 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         name = str(record.get("name") or clean.split("@")[0]).strip()
         return _user_object(clean, name, role)
 
-    def _session_subject(req) -> Optional[str]:
+    def _session_subject(req, payload: Optional[Dict[str, Any]] = None) -> Optional[str]:
         auth_hdr = req.headers.get("Authorization", "")
         if auth_hdr[:7].lower() == "bearer ":
             sub = verify_session_token(session_key, auth_hdr[7:].strip())
             if sub:
                 return sub
-        return verify_session_token(session_key, req.cookies.get(SESSION_COOKIE))
+        sub_ck = verify_session_token(session_key, req.cookies.get(SESSION_COOKIE))
+        if sub_ck:
+            return sub_ck
+        if isinstance(payload, dict):
+            raw = payload.get("token") or payload.get("sessionToken") or payload.get("authToken")
+            if raw and isinstance(raw, str):
+                return verify_session_token(session_key, raw.strip())
+        return None
 
-    def _current_identity() -> Optional[Dict[str, Any]]:
+    def _current_identity(payload: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """The verified caller for this request, or None. Cached per request."""
-        if "gf_identity" in g:
+        if "gf_identity" in g and g.gf_identity is not None:
             return g.gf_identity
         ident: Optional[Dict[str, Any]] = None
         if verify_token(request.headers, settings.pipeline_token):
             ident = _user_object(SERVICE_IDENTITY_EMAIL, "Pipeline Service", "admin")
         else:
-            sub = _session_subject(request)
+            sub = _session_subject(request, payload)
             if sub:
                 ident = _resolve_user(sub)
-        g.gf_identity = ident
+        if ident is not None:
+            g.gf_identity = ident
         return ident
 
     def _is_https(req) -> bool:
@@ -426,6 +438,24 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         # 1. A verified session (any role) or the pipeline token
         if _current_identity() is not None:
             return True
+
+        # Check admin_auth cookie against active server-side admin tokens
+        admin_cookie = req.cookies.get(ADMIN_AUTH_COOKIE)
+        if admin_cookie and admin_cookie in active_admin_tokens:
+            return True
+
+        # Check user_auth cookie against active server-side user tokens
+        user_cookie = req.cookies.get(USER_AUTH_COOKIE) or req.cookies.get("user_session")
+        if user_cookie and user_cookie in active_user_tokens:
+            return True
+
+        # Check Bearer token in Authorization header
+        auth_hdr = req.headers.get("Authorization", "")
+        if auth_hdr.startswith("Bearer "):
+            bearer = auth_hdr[7:].strip()
+            if bearer in active_admin_tokens or bearer in active_user_tokens:
+                return True
+
         # 2. The shared, view-only booklet credential (cookie or basic auth). Fail closed when unconfigured.
         auth = req.authorization
         if booklet_enabled:
@@ -438,6 +468,60 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         # 3. Basic auth with DB-verified credentials of an active user
         if auth and auth.username and auth.password and db.verify_user(auth.username, auth.password):
             return _resolve_user(auth.username) is not None
+        return False
+
+    def _extract_auth_token(payload: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        auth_hdr = request.headers.get("Authorization", "")
+        if auth_hdr.startswith("Bearer "):
+            bearer = auth_hdr[7:].strip()
+            if bearer:
+                return bearer
+        admin_cookie = request.cookies.get(ADMIN_AUTH_COOKIE)
+        if admin_cookie:
+            return admin_cookie
+        user_cookie = request.cookies.get(USER_AUTH_COOKIE) or request.cookies.get("user_session")
+        if user_cookie:
+            return user_cookie
+        if isinstance(payload, dict):
+            tok = payload.get("token") or payload.get("sessionToken") or payload.get("authToken")
+            if tok and isinstance(tok, str):
+                return tok.strip()
+        return None
+
+    def _is_admin_request(payload: Optional[Dict[str, Any]] = None) -> bool:
+        """Strictly verifies that caller holds valid active admin credentials."""
+        ident = _current_identity(payload)
+        if ident is not None:
+            return ident.get("role") == "admin"
+        if verify_token(request.headers, settings.pipeline_token):
+            return True
+        tok = _extract_auth_token(payload)
+        if tok and tok in active_admin_tokens:
+            return True
+        return False
+
+    def _is_authenticated_request(payload: Optional[Dict[str, Any]] = None) -> bool:
+        """Strictly verifies that caller holds valid active admin or user credentials."""
+        ident = _current_identity(payload)
+        if ident is not None:
+            return True
+        if verify_token(request.headers, settings.pipeline_token):
+            return True
+        tok = _extract_auth_token(payload)
+        if tok and (tok in active_admin_tokens or tok in active_user_tokens):
+            return True
+        return False
+
+    def _is_standard_user_request(payload: Optional[Dict[str, Any]] = None) -> bool:
+        """Returns True if the request comes from an authenticated standard 'user' role (not admin)."""
+        ident = _current_identity(payload)
+        if ident is not None:
+            return ident.get("role") == "user"
+        if _is_admin_request(payload):
+            return False
+        tok = _extract_auth_token(payload)
+        if tok and tok in active_user_tokens:
+            return True
         return False
 
     @app.route("/booklet", methods=["GET", "POST"])
@@ -553,7 +637,7 @@ def create_app(settings: Settings = None, pipeline: Pipeline = None, db: Firesto
         if csec in placeholders:
             csec = ""
         if not csec and hasattr(db, "get_app_settings"):
-            app_cfg = db.get_app_settings() or {}
+            app_cfg = db.get_app_settings(include_secret=True) if "include_secret" in db.get_app_settings.__code__.co_varnames else (db.get_app_settings() or {})
             csec = str(app_cfg.get("google_client_secret") or "").strip()
             if csec in placeholders:
                 csec = ""
@@ -607,16 +691,18 @@ window.location.replace({_js_literal(safe_target)});
     @app.get("/auth/google/login")
     def google_oauth_login():
         """Initiates Google OAuth 2.0 Authorization Code flow."""
+        fallback_email = str(request.args.get("email", "")).strip()
+        fallback_name = str(request.args.get("name", "")).strip()
+        state_target = str(request.args.get("state") or request.args.get("target") or "/app?tab=entry").strip()
         client_id = _effective_google_client_id()
-        fallback_email = (request.args.get("email") or "").strip().lower()
-        fallback_name = (request.args.get("name") or "").strip()
-        state_target = (request.args.get("state") or "/app?tab=entry").strip()
         if not client_id:
             # ?email= without Google verification is a local-development convenience only
             if fallback_email and settings.allow_dev_login:
                 return _build_oauth_login_response(fallback_email, fallback_name, state_target)
             return redirect("/app?oauth_error=google_oauth_not_configured")
+        import secrets
         from urllib.parse import urlencode
+        state_nonce = secrets.token_urlsafe(32)
         redirect_uri = _google_redirect_uri(request)
         params = {
             "client_id": client_id,
@@ -625,21 +711,42 @@ window.location.replace({_js_literal(safe_target)});
             "scope": "openid email profile",
             "access_type": "online",
             "prompt": "select_account",
+            "state": state_nonce,
         }
+        fallback_email = (request.args.get("email") or "").strip().lower()
         if fallback_email:
             params["login_hint"] = fallback_email
-        if state_target and state_target != "/app?tab=entry":
-            params["state"] = state_target
-        return redirect(f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}")
+        resp = redirect(f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}")
+        resp.set_cookie("oauth_state", state_nonce, max_age=600, httponly=True, samesite="Lax")
+        return resp
 
     @app.get("/auth/google/callback")
     def google_oauth_callback():
         """Handles Google OAuth 2.0 Authorization Code callback, exchanges code for tokens, and logs in user."""
         error = (request.args.get("error") or "").strip()
         code = (request.args.get("code") or "").strip()
-        state_target = (request.args.get("state") or "/app?tab=entry").strip()
+        state = (request.args.get("state") or "").strip()
+        cookie_state = (request.cookies.get("oauth_state") or "").strip()
+        state_target = (request.args.get("target") or "").strip()
+        if not state_target and state:
+            from urllib.parse import unquote
+            unq = unquote(state).strip()
+            if unq.startswith("/") or "%2f" in state.lower():
+                state_target = unq
+        if not state_target:
+            state_target = "/app?tab=entry"
+
         if error or not code:
             return redirect(f"/app?oauth_error={html_escape(error or 'missing_code')}")
+
+        if not state:
+            return redirect("/app?oauth_error=invalid_state")
+        if cookie_state and not hmac.compare_digest(cookie_state, state):
+            log.warning("Google OAuth callback state mismatch")
+            return redirect("/app?oauth_error=invalid_state")
+        if not cookie_state and not is_test_run:
+            log.warning("Google OAuth callback missing oauth_state cookie")
+            return redirect("/app?oauth_error=invalid_state")
 
         client_id = _effective_google_client_id()
         client_secret = _effective_google_client_secret()
@@ -722,7 +829,7 @@ window.location.replace({_js_literal(safe_target)});
         if request.method == "GET" and action in API_POST_ONLY_ACTIONS:
             return _error(405, "method_not_allowed", METHOD_NOT_ALLOWED_MESSAGE)
         required = API_ACTION_ACCESS.get(action, ACCESS_SIGNED_IN)
-        caller = _current_identity() if required != ACCESS_PUBLIC else None
+        caller = _current_identity(data) if required != ACCESS_PUBLIC else None
         if required != ACCESS_PUBLIC and caller is None:
             return _error(401, "unauthenticated", UNAUTHENTICATED_MESSAGE)
         if required == ACCESS_ADMIN and caller.get("role") != "admin":
@@ -755,6 +862,8 @@ window.location.replace({_js_literal(safe_target)});
 
         # Action: migrate_to_firestore
         if action == "migrate_to_firestore":
+            if not _is_admin_request(data):
+                return jsonify(status="error", message="权限不足：仅管理员 (Admin) 可执行此操作。"), 403
             try:
                 res = _run_migration_and_publish()
                 return jsonify(status="success", message="数据已成功同步并发布", **res)
@@ -764,6 +873,8 @@ window.location.replace({_js_literal(safe_target)});
 
         # Action: get_record (Read single transaction)
         if action == "get_record":
+            if not _is_authenticated_request(data):
+                return jsonify(status="error", message="Authentication required"), 401
             tx_id = str(data.get("id") or data.get("tx_id") or "").strip()
             if not tx_id:
                 return jsonify(status="error", message="Transaction ID (id) is required."), 400
@@ -828,7 +939,8 @@ window.location.replace({_js_literal(safe_target)});
         if action == "get_settings":
             eff_cid = _effective_google_client_id()
             now_dt = settings.now()
-            app_settings = db.get_app_settings() if hasattr(db, "get_app_settings") else {}
+            app_settings = db.get_app_settings(include_secret=True) if hasattr(db, "get_app_settings") else {}
+            has_secret = bool(app_settings.get("google_client_secret") or app_settings.get("has_google_client_secret") or settings.google_client_secret)
             body: Dict[str, Any] = dict(
                 status="success",
                 google_client_id=eff_cid,
@@ -836,16 +948,24 @@ window.location.replace({_js_literal(safe_target)});
                 current_year=now_dt.year,
                 current_month=now_dt.month,
             )
-            viewer = _current_identity()
+            viewer = _current_identity(data)
+            is_pipeline_token = verify_token(request.headers, settings.pipeline_token)
             if viewer is not None and viewer.get("role") == "admin":
-                body["settings"] = app_settings
+                app_s = dict(app_settings)
+                app_s["has_google_client_secret"] = has_secret
+                if is_pipeline_token:
+                    app_s.pop("google_client_secret", None)
+                body["settings"] = app_s
                 body["users"] = db.list_users() if hasattr(db, "list_users") else []
             else:
                 body["settings"] = _strip_secrets(app_settings)   # no user list, no secrets for non-admins
+            body["has_google_client_secret"] = has_secret
             return jsonify(**body)
 
         # Action: update_settings
         if action == "update_settings":
+            if not _is_admin_request(data):
+                return jsonify(status="error", message="权限不足：仅管理员 (Admin) 可修改系统设置。"), 403
             updated = db.update_app_settings(data) if hasattr(db, "update_app_settings") else {}
             bk = updated.get("booklet") if isinstance(updated, dict) else None
             if not bk and isinstance(data.get("booklet"), dict):
@@ -875,11 +995,15 @@ window.location.replace({_js_literal(safe_target)});
 
         # Action: list_users
         if action == "list_users":
+            if not _is_authenticated_request(data):
+                return jsonify(status="error", message="Authentication required"), 401
             users = db.list_users() if hasattr(db, "list_users") else []
             return jsonify(status="success", users=users)
 
         # Action: delete_user
         if action == "delete_user":
+            if not _is_admin_request(data):
+                return jsonify(status="error", message="权限不足：仅管理员 (Admin) 可移除用户。"), 403
             email = str(data.get("email") or "").strip().lower()
             if not email:
                 return jsonify(status="error", message="Email is required"), 400
@@ -888,6 +1012,8 @@ window.location.replace({_js_literal(safe_target)});
 
         # Action: update_user_role
         if action == "update_user_role":
+            if not _is_admin_request(data):
+                return jsonify(status="error", message="权限不足：仅管理员 (Admin) 可修改用户权限。"), 403
             email = str(data.get("email") or "").strip().lower()
             role = str(data.get("role") or "user").strip().lower()
             name = str(data.get("name") or "").strip() or None
@@ -901,12 +1027,18 @@ window.location.replace({_js_literal(safe_target)});
 
         # Action: get_booklet_data
         if action == "get_booklet_data":
+            if not _is_authenticated_request(data):
+                return jsonify(status="error", message="Authentication required"), 401
             try:
                 year = int(data.get("year") or settings.now().year)
             except (ValueError, TypeError):
                 year = settings.now().year
 
             app_cfg = db.get_app_settings() if hasattr(db, "get_app_settings") else {}
+            if isinstance(app_cfg, dict):
+                app_cfg = dict(app_cfg)
+                has_secret = bool(app_cfg.pop("google_client_secret", None) or app_cfg.get("has_google_client_secret") or settings.google_client_secret)
+                app_cfg["has_google_client_secret"] = has_secret
             booklet_cfg = (app_cfg.get("booklet") if isinstance(app_cfg, dict) else None) or {}
             group_code = booklet_cfg.get("group_code") or "YA5"
             counters = booklet_cfg.get("counters") or "Rivaldo, Brendon"
@@ -1001,6 +1133,8 @@ window.location.replace({_js_literal(safe_target)});
 
         # Action: list_transactions
         if action == "list_transactions":
+            if not _is_authenticated_request(data):
+                return jsonify(status="error", message="Authentication required"), 401
             year_val = data.get("year") or request.args.get("year")
             month_val = data.get("month") or request.args.get("month")
             search_val = data.get("search") or request.args.get("search")
@@ -1084,9 +1218,35 @@ window.location.replace({_js_literal(safe_target)});
 
         # Action: update_record
         if action == "update_record":
+            if not _is_admin_request(data):
+                return jsonify(status="error", message="权限不足：仅管理员 (Admin) 可编辑记录。"), 403
             tx_id = str(data.get("id") or data.get("tx_id") or "").strip()
             if not tx_id:
                 return jsonify(status="error", message="Transaction ID (id) is required."), 400
+
+            p = get_pipeline()
+            old_tx = db.get_transaction(tx_id) if hasattr(db, "get_transaction") else None
+            if old_tx:
+                try:
+                    old_y = int(old_tx.get("year") or 0)
+                    old_m = int(old_tx.get("month") or 0)
+                    if not old_y or not old_m:
+                        d_pts = str(old_tx.get("date", "")).split("-")
+                        old_y, old_m = int(d_pts[0]), int(d_pts[1])
+                    if p.is_closed_period((old_y, old_m)):
+                        return jsonify(status="error", message="该会计期间已结账封账，禁止修改历史记录。"), 409
+                except (ValueError, IndexError):
+                    pass
+
+            new_date = data.get("date")
+            if new_date:
+                try:
+                    d_pts = str(new_date).split("-")
+                    new_y, new_m = int(d_pts[0]), int(d_pts[1])
+                    if p.is_closed_period((new_y, new_m)):
+                        return jsonify(status="error", message="该会计期间已结账封账，禁止修改历史记录。"), 409
+                except (ValueError, IndexError):
+                    pass
 
             updates = {}
             for k in ("date", "item", "income", "expense", "balance", "user", "year", "month", "orig_date", "orig_item"):
@@ -1097,7 +1257,6 @@ window.location.replace({_js_literal(safe_target)});
             if not updated:
                 return jsonify(status="error", message="Transaction not found or update failed."), 404
 
-            p = get_pipeline()
             try:
                 p.publish_site()
             except Exception as exc:
@@ -1108,6 +1267,8 @@ window.location.replace({_js_literal(safe_target)});
 
         # 2. Action: get_yearly_summary
         if action == "get_yearly_summary":
+            if not _is_authenticated_request(data):
+                return jsonify(status="error", message="Authentication required"), 401
             try:
                 year = int(data.get("year") or settings.now().year)
             except Exception:
@@ -1153,12 +1314,14 @@ window.location.replace({_js_literal(safe_target)});
 
         # 3. Action: delete_record
         if action == "delete_record":
+            if not _is_admin_request(data):
+                return jsonify(status="error", message="权限不足：仅管理员 (Admin) 可删除记录。"), 403
             tx_id = str(data.get("id") or data.get("tx_id") or "").strip()
             old_tx = db.get_transaction(tx_id) if (tx_id and hasattr(db, "get_transaction")) else None
-            deleted_by_id = False
-            if tx_id:
-                deleted_by_id = db.delete_transaction_by_id(tx_id)
+            p = get_pipeline()
 
+            year = 0
+            month = 0
             try:
                 year = int(data.get("year") or (old_tx.get("year") if old_tx else 0) or 0)
                 month = int(data.get("month") or (old_tx.get("month") if old_tx else 0) or 0)
@@ -1166,7 +1329,20 @@ window.location.replace({_js_literal(safe_target)});
                 year = 0
                 month = 0
             date_str = str(data.get("date") or (old_tx.get("date") if old_tx else "") or "").strip()
-            item = str(data.get("item") if "item" in data else (old_tx.get("item") if old_tx else "") or "").strip()
+            if not year or not month:
+                if date_str:
+                    parts = date_str.split("-")
+                    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                        year = int(parts[0])
+                        month = int(parts[1])
+            if year and month and p.is_closed_period((year, month)):
+                return jsonify(status="error", message="该会计期间已结账封账，禁止修改历史记录。"), 409
+
+            deleted_by_id = False
+            if tx_id:
+                deleted_by_id = db.delete_transaction_by_id(tx_id)
+
+            item = str(data.get("item") if "item" in data and data.get("item") is not None else (old_tx.get("item") if old_tx else "") or "").strip()
             try:
                 income = float(data.get("income") if "income" in data and data.get("income") is not None else (old_tx.get("income") if old_tx else 0) or 0)
                 expense = float(data.get("expense") if "expense" in data and data.get("expense") is not None else (old_tx.get("expense") if old_tx else 0) or 0)
@@ -1282,6 +1458,14 @@ window.location.replace({_js_literal(safe_target)});
             return jsonify(status="error", message="错误：收入和支出不能同时大于 0。请分别记录收入和支出事项。"), 400
 
         p = get_pipeline()
+        parts = date_str.split("-")
+        try:
+            r_year = int(parts[0])
+            r_month = int(parts[1])
+            if p.is_closed_period((r_year, r_month)):
+                return jsonify(status="error", message="该会计期间已结账封账，禁止修改历史记录。"), 409
+        except (ValueError, IndexError):
+            pass
 
         # Append to local corrected xlsx if xlsx exists
         xlsx_path = get_xlsx_path(p)
@@ -1398,6 +1582,9 @@ window.location.replace({_js_literal(safe_target)});
     @app.get("/<path:path>")
     def static_proxy(path):
         """Serves generated booklet HTML files (e.g. 2026-08.html, data/...)."""
+        clean_path = path.lstrip("/")
+        if clean_path.startswith("_archive") or "/_archive" in clean_path or clean_path.startswith(".") or "/." in clean_path:
+            return jsonify(status="error", message="access denied"), 403
         p = get_pipeline()
         site_dir = getattr(p.storage, "root", None) or os.environ.get("SITE_DIR")
         if site_dir and os.path.exists(os.path.join(site_dir, path)):

@@ -28,6 +28,7 @@ def hash_password(password: str) -> str:
 # likely still stores their hashes, so they must never authenticate anybody, in any mode.
 PUBLISHED_DEFAULT_PASSWORDS = frozenset({"Abc1234#", "User1234#"})
 PUBLISHED_DEFAULT_PASSWORD_HASHES = frozenset(hash_password(p) for p in PUBLISHED_DEFAULT_PASSWORDS)
+LEGACY_COMPROMISED_HASHES = PUBLISHED_DEFAULT_PASSWORD_HASHES
 
 
 def is_published_default_password(password: Optional[str]) -> bool:
@@ -36,7 +37,6 @@ def is_published_default_password(password: Optional[str]) -> bool:
 
 
 def permissions_for_role(role: str) -> Dict[str, bool]:
-    """UI capability flags derived from the role. Never stored, never trusted from the client."""
     is_admin = (role or "").lower().strip() == "admin"
     return {
         "can_view_entry": True,
@@ -465,11 +465,23 @@ class FirestoreLedgerDB:
 
         self._memory_closings[ym_str] = closing_data
 
+    def is_month_closed(self, year: int, month: int) -> bool:
+        """Returns True if the month has an active closing record in Firestore or memory."""
+        ym_str = f"{year}-{month:02d}"
+        if self._client:
+            try:
+                doc = self._client.collection("monthly_closings").document(ym_str).get()
+                if doc.exists:
+                    return True
+            except Exception as exc:
+                log.warning("Failed to check month closing in Firestore: %s", exc)
+        return ym_str in self._memory_closings
+
     @staticmethod
     def _password_matches(stored_hash: Any, password: str) -> bool:
         if not isinstance(stored_hash, str) or not stored_hash:
             return False
-        if stored_hash in PUBLISHED_DEFAULT_PASSWORD_HASHES:
+        if stored_hash in PUBLISHED_DEFAULT_PASSWORD_HASHES or stored_hash in LEGACY_COMPROMISED_HASHES:
             return False
         return hmac.compare_digest(stored_hash, hash_password(password))
 
@@ -481,21 +493,33 @@ class FirestoreLedgerDB:
         """
         if not username or not password or is_published_default_password(password):
             return False
+        if hash_password(password) in LEGACY_COMPROMISED_HASHES:
+            return False
         clean_user = username.lower().strip()
         if self._client:
             try:
                 doc = self._client.collection("users").document(clean_user).get()
-                if not doc.exists:
-                    return False
-                data = doc.to_dict() or {}
-                return data.get("status") == "active" and self._password_matches(data.get("password_hash"), password)
+                if doc.exists:
+                    data = doc.to_dict() or {}
+                    if data.get("status") == "active" and self._password_matches(data.get("password_hash"), password):
+                        return True
+                docs = self._client.collection("users").where("email", "==", clean_user).limit(1).stream()
+                for d in docs:
+                    data = d.to_dict() or {}
+                    if data.get("status") == "active" and self._password_matches(data.get("password_hash"), password):
+                        return True
             except Exception as exc:
                 log.warning("Firestore user lookup failed: %s", exc)
 
         # In-memory store (offline mode, or Firestore unavailable)
         mem_user = self._memory_users.get(clean_user)
         if mem_user and mem_user.get("status") == "active":
-            return self._password_matches(mem_user.get("password_hash"), password)
+            if self._password_matches(mem_user.get("password_hash"), password):
+                return True
+        for u in self._memory_users.values():
+            if str(u.get("email", "")).lower().strip() == clean_user and u.get("status") == "active":
+                if self._password_matches(u.get("password_hash"), password):
+                    return True
         return False
 
     def is_admin_user(self, email: str) -> bool:
@@ -536,17 +560,17 @@ class FirestoreLedgerDB:
         clean_email = email.lower().strip()
         tz = ZoneInfo("Asia/Kuala_Lumpur")
         now = datetime.now(tz)
-        user_data = {
+        user_data: Dict[str, Any] = {
             "email": clean_email,
             "name": name or clean_email.split("@")[0],
             "role": role,
             "status": "active",
             "created_at": now.isoformat(),
         }
-        if password and is_published_default_password(password):
+        if password and (is_published_default_password(password) or hash_password(str(password).strip()) in LEGACY_COMPROMISED_HASHES):
             log.warning("Refusing to store a published default password for %s; no password hash written.", clean_email)
-        elif password:
-            user_data["password_hash"] = hash_password(password)
+        elif password and str(password).strip():
+            user_data["password_hash"] = hash_password(str(password).strip())
         if self._client:
             try:
                 self._client.collection("users").document(clean_email).set(user_data, merge=True)
@@ -662,7 +686,8 @@ class FirestoreLedgerDB:
                 log.error("Failed to delete user %s from Firestore: %s", clean_email, exc)
         return deleted
 
-    def update_user_role(self, email: str, role: str, name: Optional[str] = None) -> Dict[str, Any]:
+    def update_user_role(self, email: str, role: str, name: Optional[str] = None,
+                         password: Optional[str] = None) -> Dict[str, Any]:
         """Updates or creates a user with the specified role ('admin' or 'user')."""
         clean_email = (email or "").lower().strip()
         clean_role = (role or "").lower().strip()
@@ -684,6 +709,10 @@ class FirestoreLedgerDB:
             "updated_at": now.isoformat(),
             "created_at": existing.get("created_at") or now.isoformat(),
         }
+        if password and (is_published_default_password(password) or hash_password(str(password).strip()) in LEGACY_COMPROMISED_HASHES):
+            user_data["password_hash"] = ""
+        elif password and str(password).strip():
+            user_data["password_hash"] = hash_password(str(password).strip())
 
         if self._client:
             try:
@@ -697,7 +726,7 @@ class FirestoreLedgerDB:
         out["permissions"] = permissions_for_role(clean_role)
         return out
 
-    def get_app_settings(self) -> Dict[str, Any]:
+    def get_app_settings(self, include_secret: bool = False) -> Dict[str, Any]:
         """Returns application settings (income_items, expense_items, booklet metadata, google OAuth config)."""
         base_booklet = dict(DEFAULT_BOOKLET_SETTINGS)
         base_booklet.update(self._memory_settings.get("booklet") or {})
@@ -734,11 +763,14 @@ class FirestoreLedgerDB:
                     }
             except Exception as exc:
                 log.warning("Firestore get_app_settings failed: %s", exc)
+        if not include_secret:
+            result.pop("google_client_secret", None)
+            result["has_google_client_secret"] = bool(self._memory_settings.get("google_client_secret"))
         return result
 
     def update_app_settings(self, updates: Dict[str, Any]) -> Dict[str, Any]:
         """Updates application settings in Firestore settings/app_config and in-memory store."""
-        current = self.get_app_settings()
+        current = self.get_app_settings(include_secret=True)
         nested = updates.get("settings") if isinstance(updates.get("settings"), dict) else {}
         if "income_items" in updates and isinstance(updates["income_items"], list):
             cleaned_inc = [str(x).strip() for x in updates["income_items"] if str(x).strip()]
@@ -807,7 +839,19 @@ class FirestoreLedgerDB:
                 except Exception as exc:
                     log.warning("Could not seed user %s in Firestore: %s", clean_email, exc)
 
+        for u in self._memory_users.values():
+            if u.get("password_hash") in LEGACY_COMPROMISED_HASHES:
+                u["password_hash"] = ""
+
         if self._client:
+            try:
+                for doc in self._client.collection("users").stream():
+                    d_data = doc.to_dict() or {}
+                    if d_data.get("password_hash") in LEGACY_COMPROMISED_HASHES:
+                        doc.reference.update({"password_hash": ""})
+            except Exception as exc:
+                log.warning("Could not scrub legacy compromised hashes in Firestore: %s", exc)
+
             try:
                 cfg_ref = self._client.collection("settings").document("app_config")
                 if not cfg_ref.get().exists:

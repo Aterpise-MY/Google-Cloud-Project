@@ -384,7 +384,7 @@ def render_month_card(month: Month, *, closed: bool = False, closing_date: Optio
             classes = ENTRY_CELLS
             if editable:
                 e = month.entries[n - 1]
-                escaped_item = escape(e.item.replace("'", "\\'"))
+                escaped_item = escape(e.item.replace("\\", "\\\\").replace("'", "\\'"))
                 act_td = (f'<td class="col-act"><button type="button" class="btn-del" '
                           f'onclick="deleteEntry(\'{month.year}\', \'{month.month}\', '
                           f'\'{_short_date(e.date)}\', \'{escaped_item}\', \'{e.income}\', '
