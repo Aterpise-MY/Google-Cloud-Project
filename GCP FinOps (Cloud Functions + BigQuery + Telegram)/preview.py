@@ -17,6 +17,17 @@ from report import Deps, handle_payload  # noqa: E402
 
 
 class SampleData:
+    service_credits = {
+        "Vertex AI": -3.4210,
+        "Gemini API": -3.1075,
+        "BigQuery": -1.2034,
+        "Cloud Run": -0.3320,
+    }
+    weekly_credits = (
+        {"Vertex AI": -20.0, "Gemini API": -21.8, "BigQuery": -8.4, "Cloud Run": -2.3},
+        {"Vertex AI": -10.0, "Gemini API": -22.5, "BigQuery": -8.4, "Cloud Run": -0.9},
+    )
+
     def service_costs(self, start, end):
         return ({
             "Vertex AI": 8.4210, "Gemini API": 3.1075, "BigQuery": 1.2034, "Cloud Run": 0.3320,
@@ -39,10 +50,21 @@ class SampleData:
 
     def sku_costs(self, start, end, services):
         return {
-            "Vertex AI": [{"name": f"Gemini 2.5 Flash {k} tokens (asia-southeast1)", "cost": 20.0 - 3 * i}
-                          for i, k in enumerate(["input", "output", "cached", "image", "audio", "video"])],
-            "BigQuery": [{"name": "Analysis (US)", "cost": 7.9}, {"name": "Active Logical Storage (US)", "cost": 0.5}],
-            "Cloud Run": [{"name": "Services CPU (tier 1) in us-central1", "cost": 1.9}],
+            "Vertex AI": [
+                {
+                    "name": f"Gemini 2.5 Flash {k} tokens (asia-southeast1)",
+                    "cost": 20.0 - 3 * i,
+                    "credits": -5.0 if i == 0 else 0.0,
+                }
+                for i, k in enumerate(["input", "output", "cached", "image", "audio", "video"])
+            ],
+            "BigQuery": [
+                {"name": "Analysis (US)", "cost": 7.9, "credits": -7.9},
+                {"name": "Active Logical Storage (US)", "cost": 0.5, "credits": -0.5},
+            ],
+            "Cloud Run": [
+                {"name": "Services CPU (tier 1) in us-central1", "cost": 1.9, "credits": -1.9}
+            ],
         }
 
     def request_count(self, start, end):
@@ -65,6 +87,17 @@ BANNER = "🧪 TEST MESSAGE: sample data, not real costs"
 
 class SendSampleData:
     """Realistic sample rows for the messages sent to the user (no joke names)."""
+
+    service_credits = {
+        "Vertex AI": -2.5000,
+        "Gemini API": -3.2045,
+        "BigQuery": -0.8410,
+        "Cloud Run": -0.1236,
+    }
+    weekly_credits = (
+        {"Vertex AI": -15.00, "Gemini API": -22.40, "BigQuery": -5.90, "Cloud Run": -0.86},
+        {"Vertex AI": -10.00, "Gemini API": -23.10, "BigQuery": -5.80, "Cloud Run": -0.31},
+    )
 
     def service_costs(self, start, end):
         return ({
@@ -92,16 +125,16 @@ class SendSampleData:
 
     def sku_costs(self, start, end, services):
         return {
-            "Vertex AI": [{"name": n, "cost": c} for n, c in [
-                ("Gemini 2.5 Flash input tokens", 21.40), ("Gemini 2.5 Flash output tokens", 17.20),
-                ("Gemini 2.5 Pro input tokens", 5.10), ("Imagen image generation", 2.60),
-                ("Online prediction node hours", 1.30)]],
-            "Gemini API": [{"name": "Gemini 2.5 Flash input tokens", "cost": 13.70},
-                           {"name": "Gemini 2.5 Flash output tokens", "cost": 8.70}],
-            "BigQuery": [{"name": "Analysis (US)", "cost": 5.20},
-                         {"name": "Active Logical Storage (US)", "cost": 0.70}],
-            "Cloud Run": [{"name": "Services CPU (tier 1) in us-central1", "cost": 0.52},
-                          {"name": "Services Memory (tier 1) in us-central1", "cost": 0.34}],
+            "Vertex AI": [{"name": n, "cost": c, "credits": cr} for n, c, cr in [
+                ("Gemini 2.5 Flash input tokens", 21.40, -10.00), ("Gemini 2.5 Flash output tokens", 17.20, -5.00),
+                ("Gemini 2.5 Pro input tokens", 5.10, 0.0), ("Imagen image generation", 2.60, 0.0),
+                ("Online prediction node hours", 1.30, 0.0)]],
+            "Gemini API": [{"name": "Gemini 2.5 Flash input tokens", "cost": 13.70, "credits": -13.70},
+                           {"name": "Gemini 2.5 Flash output tokens", "cost": 8.70, "credits": -8.70}],
+            "BigQuery": [{"name": "Analysis (US)", "cost": 5.20, "credits": -5.20},
+                         {"name": "Active Logical Storage (US)", "cost": 0.70, "credits": -0.70}],
+            "Cloud Run": [{"name": "Services CPU (tier 1) in us-central1", "cost": 0.52, "credits": -0.52},
+                          {"name": "Services Memory (tier 1) in us-central1", "cost": 0.34, "credits": -0.34}],
             "Cloud Storage": [{"name": "Standard Storage US Multi-region", "cost": 0.36}],
         }
 

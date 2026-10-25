@@ -94,13 +94,23 @@ class Money:
 # --------------------------------------------------------------------------
 
 
-def build_comparison_table(current: dict, previous: dict, cfg) -> list:
+def build_comparison_table(
+    current: dict,
+    previous: dict,
+    cfg,
+    current_credits: dict | None = None,
+    previous_credits: dict | None = None,
+) -> list:
+    curr_cred_map = current_credits or {}
+    prev_cred_map = previous_credits or {}
     rows = []
     for svc in set(current) | set(previous):
         curr = current.get(svc, 0.0)
         prev = previous.get(svc, 0.0)
         if curr < cfg.min_cost and prev < cfg.min_cost:
             continue
+        curr_cred = float(curr_cred_map.get(svc, 0.0))
+        prev_cred = float(prev_cred_map.get(svc, 0.0))
         delta = curr - prev
         pct = (delta / prev * 100) if prev > 0 else (100.0 if curr > 0 else 0.0)
         rows.append(
@@ -108,6 +118,10 @@ def build_comparison_table(current: dict, previous: dict, cfg) -> list:
                 "service": svc,
                 "current": curr,
                 "previous": prev,
+                "current_credits": curr_cred,
+                "previous_credits": prev_cred,
+                "current_net": curr + curr_cred,
+                "previous_net": prev + prev_cred,
                 "delta": delta,
                 "pct": pct,
                 "spike": pct >= cfg.spike_pct and delta > cfg.spike_abs,
@@ -134,7 +148,14 @@ def sku_lines(skus: list, money: Money, limit: int = SKU_N) -> list:
         last = i == len(shown) - 1 and extra == 0
         connector = "└" if last else "├"
         name = sku["name"][:SKU_NAME_MAX]
-        lines.append(f"   {connector} <code>{esc(name)}</code>  {money.fmt(sku['cost'], 3)}")
+        cred = float(sku.get("credits", 0.0))
+        if abs(cred) >= 0.0005:
+            lines.append(
+                f"   {connector} <code>{esc(name)}</code>  {money.fmt(sku['cost'], 3)} "
+                f"(real {money.fmt(sku['cost'] + cred, 3)})"
+            )
+        else:
+            lines.append(f"   {connector} <code>{esc(name)}</code>  {money.fmt(sku['cost'], 3)}")
     if extra > 0:
         lines.append(f"   └ … +{extra} more")
     return lines
@@ -191,6 +212,7 @@ def build_daily_message(
     mtd_credits: float,
     money: Money,
     billing_account_id: str,
+    yesterday_credits: float = 0.0,
 ) -> str:
     head = [
         "💰 <b>GCP Daily FinOps Digest</b>",
@@ -198,11 +220,16 @@ def build_daily_message(
         "",
         "📊 <b>Overview:</b>",
         f"• Yesterday: <b>{money.fmt(yesterday_total)}</b>",
-        f"• Month-to-Date: <b>{money.fmt(mtd_total)}</b>",
     ]
+    if abs(yesterday_credits) >= 0.005:
+        head.append(f"• Credits (Yesterday): <b>{money.fmt(yesterday_credits)}</b>")
+        head.append(f"• Net Yesterday (Real Cost): <b>{money.fmt(yesterday_total + yesterday_credits)}</b>")
+    head.append(f"• Month-to-Date: <b>{money.fmt(mtd_total)}</b>")
     if abs(mtd_credits) >= 0.005:
         head.append(f"• Credits (Month-to-Date): <b>{money.fmt(mtd_credits)}</b>")
         head.append(f"• Net Month-to-Date: <b>{money.fmt(mtd_total + mtd_credits)}</b>")
+    if top_services:
+        head.append(f"• Active Services: <b>{len(top_services)}</b>")
     head += ["", "🔍 <b>Top Spenders (Yesterday):</b>"]
 
     rows = []
@@ -210,9 +237,19 @@ def build_daily_message(
         rows.append(["<i>No significant spend recorded for yesterday.</i>"])
     else:
         for i, svc in enumerate(top_services[:TOP_SERVICES], start=1):
-            rows.append(
-                [f"{i}. {service_emoji(svc['name'])} {esc(svc['name'])}: <b>{money.fmt(svc['cost'])}</b>"]
-            )
+            cred = float(svc.get("credits", 0.0))
+            if abs(cred) >= 0.005:
+                rows.append(
+                    [
+                        f"{i}. {service_emoji(svc['name'])} {esc(svc['name'])}: "
+                        f"<b>{money.fmt(svc['cost'])}</b> "
+                        f"(credit <code>{money.fmt(cred)}</code> → real <b>{money.fmt(svc['cost'] + cred)}</b>)"
+                    ]
+                )
+            else:
+                rows.append(
+                    [f"{i}. {service_emoji(svc['name'])} {esc(svc['name'])}: <b>{money.fmt(svc['cost'])}</b>"]
+                )
     tail = ["", billing_link(billing_account_id)]
     return assemble(head, rows, tail)
 
@@ -232,6 +269,8 @@ def build_weekly_message(
     sku_map: dict,
     money: Money,
     cfg,
+    current_credits_total: float = 0.0,
+    previous_credits_total: float = 0.0,
 ) -> str:
     week_start = week_end - timedelta(days=7)
     prev_week_start = week_start - timedelta(days=7)
@@ -249,10 +288,17 @@ def build_weekly_message(
         RULE,
         "📊 <b>Account Summary</b>",
         f"💵 This week:   <code>{money.fmt(current_total, 4)}</code>",
-        f"💵 Last week:   <code>{money.fmt(previous_total, 4)}</code>",
+    ]
+    if abs(current_credits_total) >= 0.0005:
+        head.append(f"🎁 Credits:     <code>{money.fmt(current_credits_total, 4)}</code>")
+        head.append(f"💎 Real (Net):  <code>{money.fmt(current_total + current_credits_total, 4)}</code>")
+    head.append(f"💵 Last week:   <code>{money.fmt(previous_total, 4)}</code>")
+    if abs(previous_credits_total) >= 0.0005:
+        head.append(f"💎 Last (Net):  <code>{money.fmt(previous_total + previous_credits_total, 4)}</code>")
+    head.extend([
         f"📈 WoW change: <code>{money.signed(total_delta, 4)}</code> ({total_sign}{total_pct:.0f}%) {total_arrow}",
         f"⚡ Cloud Run requests: <code>{request_count:,}</code>",
-    ]
+    ])
     if current_total > cfg.alert_threshold:
         head.append(
             f"⚠️ <b>Cost Alert:</b> Weekly spend exceeds {money.symbol}{cfg.alert_threshold:.0f}!"
@@ -270,8 +316,14 @@ def build_weekly_message(
         block = [
             f"{service_emoji(r['service'])} <b>{esc(r['service'])}</b>{spike}",
             f"   Current: <code>{money.fmt(r['current'], 4)}</code>  {delta_str(r['delta'], r['pct'])}",
-            f"   Previous: <code>{money.fmt(r['previous'], 4)}</code>",
         ]
+        curr_cred = float(r.get("current_credits", 0.0))
+        if abs(curr_cred) >= 0.0005:
+            curr_net = float(r.get("current_net", r["current"] + curr_cred))
+            block.append(
+                f"   Credits: <code>{money.fmt(curr_cred, 4)}</code> → Real: <code>{money.fmt(curr_net, 4)}</code>"
+            )
+        block.append(f"   Previous: <code>{money.fmt(r['previous'], 4)}</code>")
         if i < DRILLDOWN_N and r["service"] in sku_map:
             block.extend(sku_lines(sku_map[r["service"]], money))
         block.append("")

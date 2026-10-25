@@ -78,6 +78,41 @@ def test_weekly_costs_and_sku_costs():
     assert bd(FakeBQClient()).sku_costs(S, E, []) == {}
 
 
+def test_per_service_and_weekly_and_sku_credits_extraction():
+    svc_rows = [
+        {"service_name": "Cloud Run", "currency": "MYR", "cost": 2.5, "credits": -2.5},
+        {"service_name": "Vertex AI", "currency": "MYR", "cost": 10.0, "credits": -3.0},
+    ]
+    data_svc = bd(FakeBQClient(rows=svc_rows))
+    totals, cur = data_svc.service_costs(S, E)
+    assert totals == {"Cloud Run": 2.5, "Vertex AI": 10.0} and cur == "MYR"
+    assert data_svc.last_service_credits == {"Cloud Run": -2.5, "Vertex AI": -3.0}
+
+    wk_rows = [
+        {
+            "service_name": "Cloud Run",
+            "currency": "MYR",
+            "current_cost": 4.0,
+            "previous_cost": 2.0,
+            "current_credits": -4.0,
+            "previous_credits": -2.0,
+        }
+    ]
+    data_wk = bd(FakeBQClient(rows=wk_rows))
+    w_cur, w_prev, _ = data_wk.weekly_costs(S, S, E)
+    assert w_cur == {"Cloud Run": 4.0} and w_prev == {"Cloud Run": 2.0}
+    assert data_wk.last_weekly_credits == ({"Cloud Run": -4.0}, {"Cloud Run": -2.0})
+
+    sku_rows = [
+        {"service_name": "Cloud Run", "sku_name": "CPU", "cost": 1.5, "credits": -1.5},
+    ]
+    data_sku = bd(FakeBQClient(rows=sku_rows))
+    skus = data_sku.sku_costs(S, E, ["Cloud Run"])
+    assert skus["Cloud Run"] == [
+        {"name": "CPU", "cost": 1.5, "credits": -1.5, "net_cost": 0.0}
+    ]
+
+
 def test_request_count_fails_soft():
     class BoomMon:
         def list_time_series(self, **kw):

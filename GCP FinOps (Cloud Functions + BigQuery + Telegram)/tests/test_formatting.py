@@ -60,6 +60,31 @@ def test_credits_lines_present_and_absent():
     assert "Credits" not in without and "Net Month" not in without
 
 
+def test_daily_yesterday_credits_and_per_service_real_cost():
+    top = [
+        {"name": "Vertex AI", "cost": 8.0, "credits": -3.0},
+        {"name": "Cloud Run", "cost": 1.5, "credits": -1.5},
+        {"name": "Cloud Storage", "cost": 0.5, "credits": 0.0},
+    ]
+    m = f.build_daily_message(
+        yesterday=Y,
+        today=T,
+        yesterday_total=10.0,
+        yesterday_credits=-4.5,
+        top_services=top,
+        mtd_total=50.0,
+        mtd_credits=-10.0,
+        money=MYR,
+        billing_account_id=CFG.billing_account_id,
+    )
+    assert "• Credits (Yesterday): <b>-RM4.50</b>" in m
+    assert "• Net Yesterday (Real Cost): <b>RM5.50</b>" in m
+    assert "• Active Services: <b>3</b>" in m
+    assert "Vertex AI: <b>RM8.00</b> (credit <code>-RM3.00</code> → real <b>RM5.00</b>)" in m
+    assert "Cloud Run: <b>RM1.50</b> (credit <code>-RM1.50</code> → real <b>RM0.00</b>)" in m
+    assert "Cloud Storage: <b>RM0.50</b>\n" in m or m.endswith("Cloud Storage: <b>RM0.50</b>")
+
+
 def test_emoji_map_keys_lowercase_and_real_service_names():
     assert all(k == k.lower() for k in f.SERVICE_EMOJIS)
     snap = json.loads((Path(__file__).parent / "fixtures" / "billing_catalog_names.json").read_text())
@@ -145,6 +170,47 @@ def test_sku_drilldown_truncation_and_layout():
     exact = f.sku_lines(skus[:4], MYR)
     assert exact[-1].startswith("   └") and "more" not in exact[-1]
     assert f.sku_lines([], MYR) == []
+
+
+def test_weekly_credits_and_real_net_in_summary_breakdown_and_skus():
+    rows = f.build_comparison_table(
+        {"Vertex AI": 12.0, "Cloud Run": 2.0},
+        {"Vertex AI": 6.0, "Cloud Run": 1.0},
+        CFG,
+        current_credits={"Vertex AI": -4.0, "Cloud Run": -2.0},
+        previous_credits={"Vertex AI": -2.0, "Cloud Run": -1.0},
+    )
+    by = {r["service"]: r for r in rows}
+    assert by["Vertex AI"]["current_net"] == 8.0
+    assert by["Cloud Run"]["current_net"] == 0.0
+    assert by["Vertex AI"]["previous_net"] == 4.0
+
+    sku_map = {
+        "Vertex AI": [
+            {"name": "Gemini Flash input", "cost": 8.0, "credits": -4.0},
+            {"name": "Gemini Flash output", "cost": 4.0, "credits": 0.0},
+        ],
+        "Cloud Run": [{"name": "Services CPU", "cost": 2.0, "credits": -2.0}],
+    }
+    w = f.build_weekly_message(
+        rows=rows,
+        current_total=14.0,
+        previous_total=7.0,
+        current_credits_total=-6.0,
+        previous_credits_total=-3.0,
+        request_count=500,
+        week_end=T,
+        sku_map=sku_map,
+        money=MYR,
+        cfg=CFG,
+    )
+    assert "🎁 Credits:     <code>-RM6.0000</code>" in w
+    assert "💎 Real (Net):  <code>RM8.0000</code>" in w
+    assert "💎 Last (Net):  <code>RM4.0000</code>" in w
+    assert "   Credits: <code>-RM4.0000</code> → Real: <code>RM8.0000</code>" in w
+    assert "   Credits: <code>-RM2.0000</code> → Real: <code>RM0.0000</code>" in w
+    assert "<code>Gemini Flash input</code>  RM8.000 (real RM4.000)" in w
+    assert "<code>Services CPU</code>  RM2.000 (real RM0.000)" in w
 
 
 def test_drilldown_only_for_top_five():

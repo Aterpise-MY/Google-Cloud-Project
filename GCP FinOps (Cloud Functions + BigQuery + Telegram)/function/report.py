@@ -34,9 +34,15 @@ def _daily(cfg: Config, data, today: date, tz: ZoneInfo) -> str:
 
     log.info("[daily] yesterday breakdown %s -> %s", yesterday, today)
     by_service, currency = data.service_costs(_midnight(yesterday, tz), _midnight(today, tz))
-    kept = [{"name": k, "cost": v} for k, v in by_service.items() if v >= cfg.min_cost]
+    svc_credits = getattr(data, "last_service_credits", None) or getattr(data, "service_credits", {}) or {}
+    kept = []
+    for k, v in by_service.items():
+        if v >= cfg.min_cost:
+            cred = float(svc_credits.get(k, 0.0))
+            kept.append({"name": k, "cost": v, "credits": cred, "net_cost": v + cred})
     kept.sort(key=lambda x: (-x["cost"], x["name"]))
     yesterday_total = sum(s["cost"] for s in kept)  # all kept services, not only rows shown
+    yesterday_credits = sum(s.get("credits", 0.0) for s in kept)
 
     if mtd_start == today:  # 1st of the month: no completed days yet, no query
         mtd_total = mtd_credits = 0.0
@@ -51,6 +57,7 @@ def _daily(cfg: Config, data, today: date, tz: ZoneInfo) -> str:
         yesterday=yesterday,
         today=today,
         yesterday_total=yesterday_total,
+        yesterday_credits=yesterday_credits,
         top_services=kept,
         mtd_total=mtd_total,
         mtd_credits=mtd_credits,
@@ -66,9 +73,17 @@ def _weekly(cfg: Config, data, today: date, tz: ZoneInfo) -> str:
 
     log.info("[weekly] current %s -> %s | previous %s -> %s", curr_start, today, prev_start, curr_start)
     current, previous, currency = data.weekly_costs(start, mid, end)
-    rows = fmt.build_comparison_table(current, previous, cfg)
+    curr_credits_map, prev_credits_map = (
+        getattr(data, "last_weekly_credits", None)
+        or getattr(data, "weekly_credits", ({}, {}))
+    )
+    rows = fmt.build_comparison_table(
+        current, previous, cfg, current_credits=curr_credits_map, previous_credits=prev_credits_map
+    )
     current_total = sum(current.values())
     previous_total = sum(previous.values())
+    current_credits_total = sum(curr_credits_map.values())
+    previous_credits_total = sum(prev_credits_map.values())
     requests = data.request_count(mid, end)
 
     top = [r["service"] for r in rows[: fmt.DRILLDOWN_N]]
@@ -80,6 +95,8 @@ def _weekly(cfg: Config, data, today: date, tz: ZoneInfo) -> str:
         rows=rows,
         current_total=current_total,
         previous_total=previous_total,
+        current_credits_total=current_credits_total,
+        previous_credits_total=previous_credits_total,
         request_count=requests,
         week_end=today,
         sku_map=sku_map,
