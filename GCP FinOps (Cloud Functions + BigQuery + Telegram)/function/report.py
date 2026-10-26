@@ -35,24 +35,68 @@ def _daily(cfg: Config, data, today: date, tz: ZoneInfo) -> str:
     log.info("[daily] yesterday breakdown %s -> %s", yesterday, today)
     by_service, currency = data.service_costs(_midnight(yesterday, tz), _midnight(today, tz))
     svc_credits = getattr(data, "last_service_credits", None) or getattr(data, "service_credits", {}) or {}
-    kept = []
-    for k, v in by_service.items():
-        if v >= cfg.min_cost:
-            cred = float(svc_credits.get(k, 0.0))
-            kept.append({"name": k, "cost": v, "credits": cred, "net_cost": v + cred})
-    kept.sort(key=lambda x: (-x["cost"], x["name"]))
-    yesterday_total = sum(s["cost"] for s in kept)  # all kept services, not only rows shown
-    yesterday_credits = sum(s.get("credits", 0.0) for s in kept)
 
     if mtd_start == today:  # 1st of the month: no completed days yet, no query
         mtd_total = mtd_credits = 0.0
+        mtd_by_service: dict[str, float] = {}
+        mtd_svc_credits: dict[str, float] = {}
     else:
         log.info("[daily] month-to-date %s -> %s", mtd_start, today)
         mtd_total, mtd_credits, mtd_currency = data.month_to_date(
             _midnight(mtd_start, tz), _midnight(today, tz)
         )
+        mtd_by_service = (
+            getattr(data, "last_mtd_service_costs", None)
+            or getattr(data, "mtd_service_costs", {})
+            or {}
+        )
+        mtd_svc_credits = (
+            getattr(data, "last_mtd_service_credits", None)
+            or getattr(data, "mtd_service_credits", {})
+            or {}
+        )
         if not by_service:
             currency = mtd_currency
+
+    all_names = set(by_service.keys()) | set(mtd_by_service.keys())
+    candidates = []
+    for k in all_names:
+        y_cost = float(by_service.get(k, 0.0))
+        y_cred = float(svc_credits.get(k, 0.0))
+        if mtd_by_service or k in mtd_by_service:
+            m_cost = float(mtd_by_service.get(k, y_cost))
+            m_cred = float(mtd_svc_credits.get(k, y_cred))
+        else:
+            m_cost = 0.0 if mtd_start == today else y_cost
+            m_cred = 0.0 if mtd_start == today else y_cred
+        candidates.append(
+            {
+                "name": k,
+                "cost": y_cost,
+                "credits": y_cred,
+                "net_cost": y_cost + y_cred,
+                "mtd_cost": m_cost,
+                "mtd_credits": m_cred,
+                "mtd_net_cost": m_cost + m_cred,
+            }
+        )
+
+    above = [
+        s
+        for s in candidates
+        if s["cost"] >= cfg.min_cost
+        or s["mtd_cost"] >= cfg.min_cost
+        or abs(s["credits"]) >= cfg.min_cost
+        or abs(s["mtd_credits"]) >= cfg.min_cost
+    ]
+    if len(above) < fmt.TOP_SERVICES:
+        kept = candidates
+    else:
+        kept = above
+    kept.sort(key=lambda x: (-x["cost"], -x["mtd_cost"], x["name"]))
+    yesterday_total = sum(s["cost"] for s in kept)  # all kept services, not only rows shown
+    yesterday_credits = sum(s.get("credits", 0.0) for s in kept)
+
     return fmt.build_daily_message(
         yesterday=yesterday,
         today=today,

@@ -46,8 +46,16 @@ def test_mixed_currencies_fail():
 
 
 def test_month_to_date_returns_cost_and_credits():
-    c = FakeBQClient(rows=[{"currency": "MYR", "cost": 10.0, "credits": -4.0}])
-    assert bd(c).month_to_date(S, E) == (10.0, -4.0, "MYR")
+    c = FakeBQClient(
+        rows=[
+            {"service_name": "Cloud Run", "currency": "MYR", "cost": 3.0, "credits": -3.0},
+            {"service_name": "Vertex AI", "currency": "MYR", "cost": 7.0, "credits": -1.0},
+        ]
+    )
+    data_mtd = bd(c)
+    assert data_mtd.month_to_date(S, E) == (10.0, -4.0, "MYR")
+    assert data_mtd.last_mtd_service_costs == {"Cloud Run": 3.0, "Vertex AI": 7.0}
+    assert data_mtd.last_mtd_service_credits == {"Cloud Run": -3.0, "Vertex AI": -1.0}
 
 
 def test_table_missing_on_get_table_and_on_query():

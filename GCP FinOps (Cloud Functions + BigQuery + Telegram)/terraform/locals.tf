@@ -5,7 +5,7 @@ locals {
     managed-by = "terraform"
   }
 
-  billing_table_name = "gcp_billing_export_v1_${replace(var.billing_account_id, "-", "_")}"
+  billing_table_name = "gcp_billing_export_resource_v1_${replace(var.billing_account_id, "-", "_")}"
   billing_table_fq   = "${var.project_id}.${google_bigquery_dataset.billing_export.dataset_id}.${local.billing_table_name}"
 
   function_name = var.name_prefix

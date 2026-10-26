@@ -44,6 +44,8 @@ class FakeData:
         self.service = ({}, "MYR")
         self.service_credits = {}
         self.mtd = (0.0, 0.0, "MYR")
+        self.mtd_service_costs = {}
+        self.mtd_service_credits = {}
         self.weekly = ({}, {}, "MYR")
         self.weekly_credits = ({}, {})
         self.skus = {}
@@ -65,6 +67,8 @@ class FakeData:
     def month_to_date(self, start, end):
         self._maybe_fail("month_to_date")
         self.mtd_window = (start, end)
+        self.last_mtd_service_costs = dict(self.mtd_service_costs)
+        self.last_mtd_service_credits = dict(self.mtd_service_credits)
         return self.mtd
 
     def weekly_costs(self, start, mid, end):

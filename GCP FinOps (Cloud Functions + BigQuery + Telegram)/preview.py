@@ -22,6 +22,24 @@ class SampleData:
         "Gemini API": -3.1075,
         "BigQuery": -1.2034,
         "Cloud Run": -0.3320,
+        "Secret Manager": -0.0004,
+    }
+    mtd_service_costs = {
+        "Vertex AI": 38.4210,
+        "Gemini API": 14.1075,
+        "BigQuery": 6.2034,
+        "Cloud Run": 2.3320,
+        "Cloud Storage": 0.4521,
+        "Cloud Logging": 0.1823,
+        "Evil <svc> & Co_1": 0.1000,
+        "Secret Manager": 0.0014,
+    }
+    mtd_service_credits = {
+        "Vertex AI": -10.0000,
+        "Gemini API": -14.1075,
+        "BigQuery": -6.2034,
+        "Cloud Run": -2.3320,
+        "Secret Manager": -0.0014,
     }
     weekly_credits = (
         {"Vertex AI": -20.0, "Gemini API": -21.8, "BigQuery": -8.4, "Cloud Run": -2.3},
@@ -93,6 +111,26 @@ class SendSampleData:
         "Gemini API": -3.2045,
         "BigQuery": -0.8410,
         "Cloud Run": -0.1236,
+        "Secret Manager": -0.0004,
+    }
+    mtd_service_costs = {
+        "Vertex AI": 28.5000,
+        "Gemini API": 13.2045,
+        "BigQuery": 4.8410,
+        "Cloud Run": 1.1236,
+        "Cloud Storage": 0.3512,
+        "Cloud Logging": 0.1198,
+        "Networking": 0.0850,
+        "Cloud Vision API": 0.0520,
+        "Cloud Natural Language": 0.0220,
+        "Secret Manager": 0.0009,
+    }
+    mtd_service_credits = {
+        "Vertex AI": -10.0000,
+        "Gemini API": -13.2045,
+        "BigQuery": -4.8410,
+        "Cloud Run": -1.1236,
+        "Secret Manager": -0.0009,
     }
     weekly_credits = (
         {"Vertex AI": -15.00, "Gemini API": -22.40, "BigQuery": -5.90, "Cloud Run": -0.86},

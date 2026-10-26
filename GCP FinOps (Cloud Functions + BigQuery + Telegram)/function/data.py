@@ -46,6 +46,8 @@ class BillingData:
         self._bigquery = bigquery_module
         self._partition_clause = None
         self.last_service_credits: dict[str, float] = {}
+        self.last_mtd_service_costs: dict[str, float] = {}
+        self.last_mtd_service_credits: dict[str, float] = {}
         self.last_weekly_credits: tuple[dict[str, float], dict[str, float]] = ({}, {})
 
     # -- helpers ---------------------------------------------------------
@@ -116,19 +118,32 @@ class BillingData:
         return totals, _single_currency(rows, self._fallback)
 
     def month_to_date(self, start: datetime, end: datetime):
-        """(gross cost, credits total (<= 0 normally), currency) for [start, end)."""
+        """(gross cost, credits total (<= 0 normally), currency) for [start, end + 1 day)."""
         sql = f"""
-            SELECT currency,
+            SELECT service.description AS service_name, currency,
                    SUM(cost) AS cost,
                    SUM((SELECT IFNULL(SUM(c.amount), 0) FROM UNNEST(credits) AS c)) AS credits
             FROM `{self._table}`
-            WHERE usage_start_time >= @start AND usage_start_time < @end
+            WHERE usage_start_time >= @start AND usage_start_time < TIMESTAMP_ADD(@end, INTERVAL 1 DAY)
               {self._partition_filter()}
-            GROUP BY currency
+            GROUP BY service_name, currency
         """
         rows = self._run(sql, [self._ts("start", start), self._ts("end", end)])
-        cost = sum(float(r["cost"] or 0.0) for r in rows)
-        credits = sum(float(r["credits"] or 0.0) for r in rows)
+        cost = 0.0
+        credits = 0.0
+        mtd_costs: dict[str, float] = {}
+        mtd_credits: dict[str, float] = {}
+        for r in rows:
+            row_cost = float(r.get("cost") or 0.0)
+            row_cred = float(r.get("credits") or 0.0)
+            cost += row_cost
+            credits += row_cred
+            name = r.get("service_name")
+            if name:
+                mtd_costs[name] = mtd_costs.get(name, 0.0) + row_cost
+                mtd_credits[name] = mtd_credits.get(name, 0.0) + row_cred
+        self.last_mtd_service_costs = mtd_costs
+        self.last_mtd_service_credits = mtd_credits
         return cost, credits, _single_currency(rows, self._fallback)
 
     def weekly_costs(self, start: datetime, mid: datetime, end: datetime):
