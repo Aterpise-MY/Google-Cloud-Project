@@ -44,9 +44,8 @@ def test_daily_usd_symbol():
 def test_empty_day_line():
     m = daily([], mtd=2.0)
     assert "No significant spend recorded for yesterday." in m
-    assert "Yesterday (Before Credit): <b>RM0.00</b>" in m
-    assert "Credits (Yesterday): <b>RM0.00</b>" in m
-    assert "Net Yesterday (Real Cost): <b>RM0.00</b>" in m
+    assert "Cost Generated (Before Credit): <b>RM2.00</b>" in m
+    assert "GCP Credits Deducted: <b>RM0.00</b>" in m
     assert "Net Month-to-Date (Accumulated Bill): <b>RM2.00</b>" in m
 
 
@@ -54,24 +53,21 @@ def test_twelve_row_cap_numbering_and_total_counts_all():
     top = [{"name": f"Svc{i:02d}", "cost": 20 - i} for i in range(15)]
     m = daily(top)
     assert "12. " in m and "13. " not in m and "Svc12" not in m
-    assert f"Yesterday (Before Credit): <b>RM{sum(s['cost'] for s in top):.2f}</b>" in m
+    assert f"Cost Generated (Before Credit): <b>RM{sum(s['cost'] for s in top):.2f}</b>" in m
 
 
 def test_credits_and_accumulated_bill_always_shown_even_when_zero():
     top = [{"name": "Cloud Run", "cost": 10.0, "mtd_cost": 10.0, "mtd_credits": -3.0}]
     with_c = daily(top, mtd=10.0, credits=-3.0)
-    assert "Credits (Month-to-Date): <b>-RM3.00</b>" in with_c
+    assert "Cost Generated (Before Credit): <b>RM10.00</b>" in with_c
+    assert "GCP Credits Deducted: <b>-RM3.00</b>" in with_c
     assert "Net Month-to-Date (Accumulated Bill): <b>RM7.00</b>" in with_c
-    assert "↳ Accumulated (MTD): <b>RM10.00</b> (credit <code>-RM3.00</code> → bill <b>RM7.00</b>)" in with_c
+    assert "Cloud Run: <b>RM10.00</b> (Credit: <code>-RM3.00</code> → Net: <b>RM7.00</b>)" in with_c
     without = daily([{"name": "Cloud Run", "cost": 0.0, "mtd_cost": 0.0, "mtd_credits": 0.0}], mtd=0.0, credits=0.0)
-    assert "Yesterday (Before Credit): <b>RM0.00</b>" in without
-    assert "Credits (Yesterday): <b>RM0.00</b>" in without
-    assert "Net Yesterday (Real Cost): <b>RM0.00</b>" in without
-    assert "Month-to-Date (Before Credit): <b>RM0.00</b>" in without
-    assert "Credits (Month-to-Date): <b>RM0.00</b>" in without
+    assert "Cost Generated (Before Credit): <b>RM0.00</b>" in without
+    assert "GCP Credits Deducted: <b>RM0.00</b>" in without
     assert "Net Month-to-Date (Accumulated Bill): <b>RM0.00</b>" in without
-    assert "Cloud Run: <b>RM0.00</b> (credit <code>RM0.00</code> → real <b>RM0.00</b>)" in without
-    assert "↳ Accumulated (MTD): <b>RM0.00</b> (credit <code>RM0.00</code> → bill <b>RM0.00</b>)" in without
+    assert "Cloud Run: <b>RM0.00</b>" in without
 
 
 def test_daily_yesterday_credits_and_per_service_real_cost():
@@ -91,18 +87,13 @@ def test_daily_yesterday_credits_and_per_service_real_cost():
         money=MYR,
         billing_account_id=CFG.billing_account_id,
     )
-    assert "• Yesterday (Before Credit): <b>RM10.00</b>" in m
-    assert "• Credits (Yesterday): <b>-RM4.50</b>" in m
-    assert "• Net Yesterday (Real Cost): <b>RM5.50</b>" in m
-    assert "• Month-to-Date (Before Credit): <b>RM40.00</b>" in m
-    assert "• Credits (Month-to-Date): <b>-RM18.00</b>" in m
+    assert "• Cost Generated (Before Credit): <b>RM40.00</b>" in m
+    assert "• GCP Credits Deducted: <b>-RM18.00</b>" in m
     assert "• Net Month-to-Date (Accumulated Bill): <b>RM22.00</b>" in m
-    assert "• Active Services: <b>3</b>" in m
-    assert "Vertex AI: <b>RM8.00</b> (credit <code>-RM3.00</code> → real <b>RM5.00</b>)" in m
-    assert "↳ Accumulated (MTD): <b>RM28.00</b> (credit <code>-RM8.00</code> → bill <b>RM20.00</b>)" in m
-    assert "Cloud Run: <b>RM1.50</b> (credit <code>-RM1.50</code> → real <b>RM0.00</b>)" in m
-    assert "↳ Accumulated (MTD): <b>RM10.00</b> (credit <code>-RM10.00</code> → bill <b>RM0.00</b>)" in m
-    assert "Cloud Storage: <b>RM0.50</b> (credit <code>RM0.00</code> → real <b>RM0.50</b>)" in m
+    assert "Current Using Services (3):" in m
+    assert "Vertex AI: <b>RM28.00</b> (Credit: <code>-RM8.00</code> → Net: <b>RM20.00</b>)" in m
+    assert "Cloud Run: <b>RM10.00</b> (Credit: <code>-RM10.00</code> → Net: <b>RM0.00</b>)" in m
+    assert "Cloud Storage: <b>RM2.00</b> (Credit: <code>RM0.00</code> → Net: <b>RM2.00</b>)" in m
 
 
 def test_emoji_map_keys_lowercase_and_real_service_names():

@@ -93,7 +93,7 @@ def _daily(cfg: Config, data, today: date, tz: ZoneInfo) -> str:
         kept = candidates
     else:
         kept = above
-    kept.sort(key=lambda x: (-x["cost"], -x["mtd_cost"], x["name"]))
+    kept.sort(key=lambda x: (-x["mtd_cost"], -x["cost"], x["name"]))
     yesterday_total = sum(s["cost"] for s in kept)  # all kept services, not only rows shown
     yesterday_credits = sum(s.get("credits", 0.0) for s in kept)
 

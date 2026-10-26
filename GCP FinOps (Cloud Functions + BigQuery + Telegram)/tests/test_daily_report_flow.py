@@ -17,7 +17,7 @@ def test_min_cost_filter_and_yesterday_sums_all_kept(cfg, deps, data, tg):
     text = tg.sent[0]["text"]
     kept_total = sum(v for v in svc.values() if v >= 0.001)
     assert "Dust" not in text
-    assert f"Yesterday (Before Credit): <b>RM{kept_total:.2f}</b>" in text
+    assert f"Cost Generated (Before Credit): <b>RM{kept_total:.2f}</b>" in text
     assert "13. " not in text  # capped at 12 rows
 
 
@@ -25,7 +25,7 @@ def test_first_of_month_mtd_is_zero_without_query(cfg, deps, data, tg):
     data.service = ({"Cloud Run": 1.0}, "MYR")
     run(cfg, deps, now=datetime(2026, 11, 1, 1, 0, tzinfo=timezone.utc))
     assert "month_to_date" not in data.calls
-    assert "Month-to-Date (Before Credit): <b>RM0.00</b>" in tg.sent[0]["text"]
+    assert "Cost Generated (Before Credit): <b>RM1.00</b>" in tg.sent[0]["text"]
 
 
 def test_mtd_window_starts_on_first(cfg, deps, data):
@@ -42,38 +42,29 @@ def test_credits_flow_into_message(cfg, deps, data, tg):
     data.mtd_service_credits = {"Cloud Run": -4.0, "Vertex AI": -1.0}
     run(cfg, deps)
     text = tg.sent[0]["text"]
-    assert "Yesterday (Before Credit): <b>RM6.00</b>" in text
-    assert "Credits (Yesterday): <b>-RM3.00</b>" in text
-    assert "Net Yesterday (Real Cost): <b>RM3.00</b>" in text
-    assert "Month-to-Date (Before Credit): <b>RM20.00</b>" in text
-    assert "Credits (Month-to-Date): <b>-RM5.00</b>" in text
+    assert "Cost Generated (Before Credit): <b>RM20.00</b>" in text
+    assert "GCP Credits Deducted: <b>-RM5.00</b>" in text
     assert "Net Month-to-Date (Accumulated Bill): <b>RM15.00</b>" in text
-    assert "Active Services: <b>2</b>" in text
-    assert "(credit <code>-RM1.00</code> → real <b>RM0.00</b>)" in text
-    assert "(credit <code>-RM2.00</code> → real <b>RM3.00</b>)" in text
-    assert "↳ Accumulated (MTD): <b>RM4.00</b> (credit <code>-RM4.00</code> → bill <b>RM0.00</b>)" in text
-    assert "↳ Accumulated (MTD): <b>RM16.00</b> (credit <code>-RM1.00</code> → bill <b>RM15.00</b>)" in text
+    assert "Current Using Services (2):" in text
+    assert "Vertex AI: <b>RM16.00</b> (Credit: <code>-RM1.00</code> → Net: <b>RM15.00</b>)" in text
+    assert "Cloud Run: <b>RM4.00</b> (Credit: <code>-RM4.00</code> → Net: <b>RM0.00</b>)" in text
 
 
 def test_zero_and_micro_cost_active_services_shown_with_accumulated_mtd(cfg, deps, data, tg):
     data.service = ({"Secret Manager": 0.0004, "Cloud Scheduler": 0.0}, "MYR")
     data.service_credits = {"Secret Manager": -0.0004, "Cloud Scheduler": 0.0}
-    data.mtd = (1.5004, -1.5004, "MYR")
+    data.mtd = (1.5004, -1.5017, "MYR")
     data.mtd_service_costs = {"BigQuery": 1.5, "Secret Manager": 0.0004, "Cloud Scheduler": 0.0}
     data.mtd_service_credits = {"BigQuery": -1.5, "Secret Manager": -0.0004, "Cloud Scheduler": 0.0}
     run(cfg, deps)
     text = tg.sent[0]["text"]
-    assert "Active Services: <b>3</b>" in text
-    assert "Yesterday (Before Credit): <b>RM0.0004</b>" in text
-    assert "Credits (Yesterday): <b>-RM0.0004</b>" in text
-    assert "Net Yesterday (Real Cost): <b>RM0.00</b>" in text
-    assert "Month-to-Date (Before Credit): <b>RM1.50</b>" in text
-    assert "Credits (Month-to-Date): <b>-RM1.50</b>" in text
+    assert "Current Using Services (3):" in text
+    assert "Cost Generated (Before Credit): <b>RM1.50</b>" in text
+    assert "GCP Credits Deducted: <b>-RM1.50</b>" in text
     assert "Net Month-to-Date (Accumulated Bill): <b>RM0.00</b>" in text
-    assert "Secret Manager: <b>RM0.0004</b> (credit <code>-RM0.0004</code> → real <b>RM0.00</b>)" in text
-    assert "BigQuery: <b>RM0.00</b> (credit <code>RM0.00</code> → real <b>RM0.00</b>)" in text
-    assert "↳ Accumulated (MTD): <b>RM1.50</b> (credit <code>-RM1.50</code> → bill <b>RM0.00</b>)" in text
-    assert "Cloud Scheduler: <b>RM0.00</b> (credit <code>RM0.00</code> → real <b>RM0.00</b>)" in text
+    assert "BigQuery: <b>RM1.50</b> (Credit: <code>-RM1.50</code> → Net: <b>RM0.00</b>)" in text
+    assert "Secret Manager: <b>RM0.0004</b> (Credit: <code>-RM0.0004</code> → Net: <b>RM0.00</b>)" in text
+    assert "Cloud Scheduler: <b>RM0.00</b>" in text
 
 
 def test_weekly_credits_flow_into_message(cfg, deps, data, tg):

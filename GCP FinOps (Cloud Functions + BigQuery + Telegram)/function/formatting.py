@@ -153,7 +153,7 @@ def sku_lines(skus: list, money: Money, limit: int = SKU_N) -> list:
         if abs(cred) >= 0.0005:
             lines.append(
                 f"   {connector} <code>{esc(name)}</code>  {money.fmt(sku['cost'], 3)} "
-                f"(real {money.fmt(sku['cost'] + cred, 3)})"
+                f"(real {money.fmt(max(0.0, sku['cost'] + cred), 3)})"
             )
         else:
             lines.append(f"   {connector} <code>{esc(name)}</code>  {money.fmt(sku['cost'], 3)}")
@@ -215,44 +215,44 @@ def build_daily_message(
     billing_account_id: str,
     yesterday_credits: float = 0.0,
 ) -> str:
+    display_total = mtd_total if mtd_total > 0 else yesterday_total
+    display_credits = mtd_credits if (mtd_total > 0 or mtd_credits != 0) else yesterday_credits
+    final_net = max(0.0, display_total + display_credits)
+
     head = [
         "💰 <b>GCP Daily FinOps Digest</b>",
         f"📅 Costs for: <code>{yesterday.isoformat()}</code> (sent <code>{today.isoformat()}</code>)",
         "",
         "📊 <b>Overview:</b>",
-        f"• Active Services: <b>{len(top_services)}</b>",
-        f"• Yesterday (Before Credit): <b>{money.fmt(yesterday_total)}</b>",
-        f"• Credits (Yesterday): <b>{money.fmt(yesterday_credits)}</b>",
-        f"• Net Yesterday (Real Cost): <b>{money.fmt(yesterday_total + yesterday_credits)}</b>",
-        f"• Month-to-Date (Before Credit): <b>{money.fmt(mtd_total)}</b>",
-        f"• Credits (Month-to-Date): <b>{money.fmt(mtd_credits)}</b>",
-        f"• Net Month-to-Date (Accumulated Bill): <b>{money.fmt(mtd_total + mtd_credits)}</b>",
+        f"• Cost Generated (Before Credit): <b>{money.fmt(display_total)}</b>",
+        f"• GCP Credits Deducted: <b>{money.fmt(display_credits)}</b>",
+        f"• Net Month-to-Date (Accumulated Bill): <b>{money.fmt(final_net)}</b>",
         "",
-        "🔍 <b>Current Using Services (Yesterday &amp; Accumulated):</b>",
+        f"🔍 <b>Current Using Services ({len(top_services)}):</b>",
     ]
 
     rows = []
     if not top_services:
         rows.append(["<i>No significant spend recorded for yesterday.</i>"])
     else:
+        use_mtd = mtd_total > 0 or mtd_credits != 0
         for i, svc in enumerate(top_services[:TOP_SERVICES], start=1):
-            y_cost = float(svc.get("cost", 0.0))
-            y_cred = float(svc.get("credits", 0.0))
-            y_net = float(svc.get("net_cost", y_cost + y_cred))
-            svc_block = [
-                f"{i}. {service_emoji(svc['name'])} {esc(svc['name'])}: "
-                f"<b>{money.fmt(y_cost)}</b> "
-                f"(credit <code>{money.fmt(y_cred)}</code> → real <b>{money.fmt(y_net)}</b>)"
-            ]
-            if "mtd_cost" in svc or "mtd_credits" in svc:
-                m_cost = float(svc.get("mtd_cost", y_cost))
-                m_cred = float(svc.get("mtd_credits", y_cred))
-                m_net = float(svc.get("mtd_net_cost", m_cost + m_cred))
-                svc_block.append(
-                    f"   ↳ Accumulated (MTD): <b>{money.fmt(m_cost)}</b> "
-                    f"(credit <code>{money.fmt(m_cred)}</code> → bill <b>{money.fmt(m_net)}</b>)"
+            has_mtd = "mtd_cost" in svc or "mtd_credits" in svc
+            s_cost = float(svc.get("mtd_cost", svc.get("cost", 0.0))) if (use_mtd and has_mtd) else float(svc.get("cost", 0.0))
+            s_cred = float(svc.get("mtd_credits", svc.get("credits", 0.0))) if (use_mtd and has_mtd) else float(svc.get("credits", 0.0))
+            s_net = max(0.0, s_cost + s_cred)
+            if s_cost > 0 or abs(s_cred) > 0:
+                rows.append(
+                    [
+                        f"{i}. {service_emoji(svc['name'])} {esc(svc['name'])}: "
+                        f"<b>{money.fmt(s_cost)}</b> "
+                        f"(Credit: <code>{money.fmt(s_cred)}</code> → Net: <b>{money.fmt(s_net)}</b>)"
+                    ]
                 )
-            rows.append(svc_block)
+            else:
+                rows.append(
+                    [f"{i}. {service_emoji(svc['name'])} {esc(svc['name'])}: <b>{money.fmt(0.0)}</b>"]
+                )
         extra_svcs = top_services[TOP_SERVICES:]
         if extra_svcs and ("mtd_cost" in extra_svcs[0] or "mtd_credits" in extra_svcs[0]):
             names = ", ".join(f"{service_emoji(s['name'])} {esc(s['name'])}" for s in extra_svcs)
@@ -296,9 +296,9 @@ def build_weekly_message(
         "📊 <b>Account Summary</b>",
         f"💵 This week:   <code>{money.fmt(current_total, 4)}</code>",
         f"🎁 Credits:     <code>{money.fmt(current_credits_total, 4)}</code>",
-        f"💎 Real (Net):  <code>{money.fmt(current_total + current_credits_total, 4)}</code>",
+        f"💎 Real (Net):  <code>{money.fmt(max(0.0, current_total + current_credits_total), 4)}</code>",
         f"💵 Last week:   <code>{money.fmt(previous_total, 4)}</code>",
-        f"💎 Last (Net):  <code>{money.fmt(previous_total + previous_credits_total, 4)}</code>",
+        f"💎 Last (Net):  <code>{money.fmt(max(0.0, previous_total + previous_credits_total), 4)}</code>",
         f"📈 WoW change: <code>{money.signed(total_delta, 4)}</code> ({total_sign}{total_pct:.0f}%) {total_arrow}",
         f"⚡ Cloud Run requests: <code>{request_count:,}</code>",
     ]
@@ -322,7 +322,7 @@ def build_weekly_message(
         ]
         curr_cred = float(r.get("current_credits", 0.0))
         if abs(curr_cred) >= 0.0005 or len(rows) <= 8:
-            curr_net = float(r.get("current_net", r["current"] + curr_cred))
+            curr_net = max(0.0, float(r.get("current_net", r["current"] + curr_cred)))
             block.append(
                 f"   Credits: <code>{money.fmt(curr_cred, 4)}</code> → Real: <code>{money.fmt(curr_net, 4)}</code>"
             )
